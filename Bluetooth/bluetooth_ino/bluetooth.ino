@@ -10,7 +10,7 @@
 #define in4 16
 
 // BLE server name
-#define DEVICE_NAME "ESP_GATTS_DEMO"
+#define DEVICE_NAME "ESP_GATTS"
 
 // Service UUID
 #define SERVICE_UUID        "000000ff-0000-1000-8000-00805f9b34fb"
@@ -24,10 +24,12 @@ void Forward();
 // Callback class for handling server events
 class MyServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
+      Serial.println("Device connected");
       deviceConnected = true;
     };
 
     void onDisconnect(BLEServer* pServer) {
+      Serial.println("Device disconnected");
       deviceConnected = false;
       Stop();
       // Restart advertising when disconnected
