@@ -112,7 +112,7 @@ class EEGCarGUI(QWidget):
         
         self.setLayout(layout)
         self.setWindowTitle("EEG Car Control")
-        self.resize(400, 300) #new commit
+        self.resize(400, 300) #new commitd
     
     def connect_to_car(self):
         self.bluetooth_thread = BluetoothThread()
