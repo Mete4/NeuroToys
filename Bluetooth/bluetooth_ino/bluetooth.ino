@@ -10,7 +10,7 @@
 #define in4 16
 
 // BLE server name
-#define DEVICE_NAME "ESP_GATTS"
+#define DEVICE_NAME "ESP_CAR"
 
 // Service UUID
 #define SERVICE_UUID        "000000ff-0000-1000-8000-00805f9b34fb"
@@ -21,15 +21,15 @@ BLECharacteristic* pCharacteristic = NULL;
 bool deviceConnected = false;
 void Stop();
 void Forward();
+void Left();
+void Right();
 // Callback class for handling server events
 class MyServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
-      Serial.println("Device connected");
       deviceConnected = true;
     };
 
     void onDisconnect(BLEServer* pServer) {
-      Serial.println("Device disconnected");
       deviceConnected = false;
       Stop();
       // Restart advertising when disconnected
@@ -42,13 +42,21 @@ class MyCallbacks: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pCharacteristic) {
       String value = pCharacteristic->getValue().c_str();
       if (value.length() > 0) {
-        if (value == "ON") {
+        if (value == "MOVE_FORWARD") {
           Forward();
           Serial.println("Forward");
         }
-        else if (value == "OFF") {
+        else if (value == "STOP") {
           Stop();
           Serial.println("Stop");
+        }
+        else if (value == "MOVE_LEFT"){
+          Left();
+          Serial.println("Left");
+        }
+        else if (value == "MOVE_RIGHT"){
+          Right();
+          Serial.println("Right");
         }
       }
     }
@@ -73,6 +81,8 @@ void Left() {
   digitalWrite(in2, HIGH);
   digitalWrite(in3, LOW);
   digitalWrite(in4, HIGH);
+  delay(1000);
+  Stop();
 }
 
 void Right() {
@@ -80,6 +90,8 @@ void Right() {
   digitalWrite(in2, LOW);
   digitalWrite(in3, HIGH);
   digitalWrite(in4, LOW);
+  delay(1000);
+  Stop();
 }
 
 void Stop() {
@@ -98,9 +110,13 @@ void setup() {
   pinMode(in3, OUTPUT);
   pinMode(in4, OUTPUT);
   Stop();
+  Left();
+  Right();
+  delay(2000);
 
   // Create the BLE Device
   BLEDevice::init(DEVICE_NAME);
+  Serial.println("Device name", DEVICE_NAME);
 
   // Create the BLE Server
   pServer = BLEDevice::createServer();
