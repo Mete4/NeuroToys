@@ -10,7 +10,7 @@ import seaborn as sns
 from threading import Thread
 from constants import VIEW_BUFFER, VIEW_SUBSAMPLE, LSL_SCAN_TIMEOUT, LSL_EEG_CHUNK
 import time
-
+from signals import PlotSignals  # Import signal communication class
 
 
 def detect_eeg_spikes(data, threshold=200, min_distance=50, prominence=30):
@@ -52,6 +52,10 @@ def bandpass(sig, lowcut, highcut, fs, order=4):
 def view(window, scale, refresh, figure, backend, version=1):
     matplotlib.use(backend)
     sns.set(style="whitegrid")
+    
+    # Create signal client to send messages to main GUI
+    signal_client = PlotSignals(is_server=False)
+    signal_client.send_message("status", "Blink plot: Looking for an EEG stream...")
 
     figsize = np.int16(figure.split('x'))
 
@@ -59,8 +63,11 @@ def view(window, scale, refresh, figure, backend, version=1):
     streams = resolve_byprop('type', 'EEG', timeout=LSL_SCAN_TIMEOUT)
 
     if len(streams) == 0:
+        signal_client.send_message("status", "Blink plot: EEG stream not found!")
         raise(RuntimeError("Can't find EEG stream."))
+        
     print("Start acquiring data.")
+    signal_client.send_message("status", "Blink plot: Connected to EEG stream!")
 
     fig, ax = matplotlib.pyplot.subplots(figsize=figsize)
     lslv = LSLViewer(streams[0], fig, ax, window, scale)
@@ -68,6 +75,10 @@ def view(window, scale, refresh, figure, backend, version=1):
 
     lslv.start()
     matplotlib.pyplot.show()
+    
+    # Cleanup when plot is closed
+    signal_client.send_message("status", "Blink plot: Closed")
+    signal_client.stop()
 
 class LSLViewer():
     def __init__(self, stream, fig, ax, window, scale, dejitter=True):
@@ -79,6 +90,9 @@ class LSLViewer():
         self.inlet = StreamInlet(stream, max_chunklen=LSL_EEG_CHUNK)
         self.filt = True
         self.subsample = VIEW_SUBSAMPLE
+        
+        # Initialize signal client
+        self.signal_client = PlotSignals(is_server=False)
 
         info = self.inlet.info()
         description = info.desc()
@@ -194,6 +208,16 @@ class LSLViewer():
                                 if (blink_time_rounded not in self.detected_blinks and 
                                     current_time - self.last_blink_time > self.blink_cooldown):
                                     self.total_blinks += 1
+                                    blink_direction = ""
+                                    if self.ch_names[ii] == 'AF7':
+                                        blink_direction = "left"
+                                        # Send blink direction to main GUI
+                                        self.signal_client.send_message("blink", "left")
+                                    elif self.ch_names[ii] == 'AF8':
+                                        blink_direction = "right"
+                                        # Send blink direction to main GUI
+                                        self.signal_client.send_message("blink", "right")
+                                        
                                     print(f"Blink #{self.total_blinks} detected on channel {self.ch_names[ii]}")
                                     self.detected_blinks.add(blink_time_rounded)
                                     
@@ -237,6 +261,7 @@ class LSLViewer():
 
     def stop(self, close_event):
         self.started = False
+        self.signal_client.stop()
 
 if __name__ == "__main__":
     # Parameters for the viewer

@@ -18,9 +18,9 @@ class BluetoothController:
         )
         return device
 
-    async def connect(self):
+    async def connect(self, device_name="ESP_GATTS_DEMO"):
         """Connect to the ESP32 Bluetooth device."""
-        device = await self.scan_for_device()
+        device = await self.scan_for_device(device_name)
         if not device:
             print("ESP32 device not found.")
             return False

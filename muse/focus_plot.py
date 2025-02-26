@@ -4,6 +4,7 @@ from pylsl import StreamInlet, resolve_byprop
 import time
 import utils  
 from collections import deque
+from signals import PlotSignals  # Import signal communication class
 
 # Enum for frequency bands
 class Band:
@@ -23,14 +24,22 @@ INDEX_CHANNEL = [1]          # channel index
 rms_constant = .8
 
 if __name__ == "__main__":
+    # Create signal client to send messages to main GUI
+    signal_client = PlotSignals(is_server=False)
+    
     # Connect to LSL stream
     print('Looking for an EEG stream...')
+    signal_client.send_message("status", "Focus plot: Looking for an EEG stream...")
+    
     streams = resolve_byprop('type', 'EEG', timeout=2)
     if not streams:
+        signal_client.send_message("status", "Focus plot: EEG stream not found!")
         raise RuntimeError("Can't find EEG stream.")
+        
     inlet = StreamInlet(streams[0], max_chunklen=12)
     fs = int(inlet.info().nominal_srate())
     print("Sampling frequency:", fs, "Hz")
+    signal_client.send_message("status", "Focus plot: Connected to EEG stream!")
     
     # Initialize EEG and band buffers
     eeg_buffer = np.zeros((int(fs * BUFFER_LENGTH), 1))
@@ -79,6 +88,8 @@ if __name__ == "__main__":
             # Thresholding with state change detection 
             new_state = "above" if beta_metric > current_threshold else "below"
             if prev_state is not None and new_state != prev_state:
+                # Send a message to the main GUI before printing
+                signal_client.send_message("focus", new_state=="above")
                 print("Above threshold" if new_state=="above" else "Below threshold")
             prev_state = new_state
             
@@ -98,5 +109,7 @@ if __name__ == "__main__":
             fig.canvas.flush_events()
     except KeyboardInterrupt:
         plt.ioff()
+        signal_client.send_message("status", "Focus plot: Closed")
         print("Closing!")
+        signal_client.stop()
 
