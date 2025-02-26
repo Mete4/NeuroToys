@@ -94,7 +94,7 @@ void Right()
   digitalWrite(in2, HIGH);
   digitalWrite(in3, LOW);
   digitalWrite(in4, HIGH);
-  delay(1000);
+  delay(250);
   Stop();
 }
 
@@ -104,7 +104,7 @@ void Left()
   digitalWrite(in2, LOW);
   digitalWrite(in3, HIGH);
   digitalWrite(in4, LOW);
-  delay(1000);
+  delay(250);
   Stop();
 }
 
@@ -126,13 +126,19 @@ void setup()
   pinMode(in3, OUTPUT);
   pinMode(in4, OUTPUT);
   Stop();
+  delay(2000);
   Left();
+  delay(2000);
   Right();
   delay(2000);
+  Forward();
+  delay(2000);
+  Stop();
 
   // Create the BLE Device
   BLEDevice::init(DEVICE_NAME);
-  Serial.println("Device name", DEVICE_NAME);
+  Serial.println("Device name: ");
+  Serial.println(DEVICE_NAME);
 
   // Create the BLE Server
   pServer = BLEDevice::createServer();
