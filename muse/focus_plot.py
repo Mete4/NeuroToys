@@ -4,8 +4,8 @@ from pylsl import StreamInlet, resolve_byprop
 import time
 import utils  
 from collections import deque
-from signals import PlotSignals  # Import signal communication class
-
+from signals import PlotSignals  
+from matplotlib.widgets import Button  
 # Enum for frequency bands
 class Band:
     Delta = 0
@@ -21,7 +21,7 @@ SHIFT_LENGTH = EPOCH_LENGTH - OVERLAP_LENGTH
 INDEX_CHANNEL = [1]          # channel index
 
 # Thresholding constant 
-rms_constant = .8
+rms_constant = 1.0
 
 if __name__ == "__main__":
     # Create signal client to send messages to main GUI
@@ -50,6 +50,23 @@ if __name__ == "__main__":
     # Setup plot
     plt.ion()
     fig, ax = plt.subplots(figsize=(12, 6))
+    
+    # Create a list for focus levels
+    focus_levels = []
+    
+    # Create a reset button
+    plt.subplots_adjust(bottom=0.2)  # Make space for the button
+    ax_button = plt.axes([0.7, 0.05, 0.2, 0.075])  # [left, bottom, width, height]
+    reset_button = Button(ax_button, 'Reset Threshold')
+    
+    # Button click callback function
+    def reset_threshold(event):
+        global focus_levels  # Changed from nonlocal to global
+        focus_levels = []
+        print("Threshold reset!")
+    
+    reset_button.on_clicked(reset_threshold)
+    
     times = deque(maxlen=500)         # Time stamps
     beta_values = deque(maxlen=500)     # Beta power values
     line_beta, = ax.plot([], [], label="Beta Power")
@@ -62,8 +79,6 @@ if __name__ == "__main__":
     start_time = time.time()
     
     prev_state = None  
-
-    focus_levels = []  # history of beta values
     
     try:
         while True:
@@ -83,7 +98,7 @@ if __name__ == "__main__":
             # Compute beta power metric
             beta_metric = -smooth_band_powers[Band.Beta]
             focus_levels.append(beta_metric)
-            current_threshold = np.sqrt(np.mean(np.square(focus_levels))) * rms_constant
+            current_threshold = np.sqrt(np.mean(np.square(focus_levels))) * rms_constant if focus_levels else 0.25
             
             # Thresholding with state change detection 
             new_state = "above" if beta_metric > current_threshold else "below"

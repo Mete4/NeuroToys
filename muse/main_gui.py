@@ -203,11 +203,15 @@ class EEGMonitorGUI(QWidget):
         current_display = self.movement_display.text()
         print("Blink Direction:", direction)
         if direction == "left":
-            self.movement_display.setText("⬅️" if "⬆️" not in current_display else "⬅️ ⬆️")
+            self.movement_display.setText("⬅️" )
             self.bluetooth_thread.send_command("MOVE_LEFT")
+            if "⬆️" in current_display:
+                self.bluetooth_thread.send_command("MOVE_FORWARD")
         elif direction == "right":
-            self.movement_display.setText("➡️" if "⬆️" not in current_display else "➡️ ⬆️")
+            self.movement_display.setText("➡️" )
             self.bluetooth_thread.send_command("MOVE_RIGHT")
+            if "⬆️" in current_display:
+                self.bluetooth_thread.send_command("MOVE_FORWARD")
 
     def update_focus(self, focused):
         """Updates movement display based on focus detection and sends Bluetooth command."""
