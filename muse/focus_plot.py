@@ -4,7 +4,8 @@ from pylsl import StreamInlet, resolve_byprop
 import time
 import utils  
 from collections import deque
-
+from signals import PlotSignals  
+from matplotlib.widgets import Button  
 # Enum for frequency bands
 class Band:
     Delta = 0
@@ -20,17 +21,25 @@ SHIFT_LENGTH = EPOCH_LENGTH - OVERLAP_LENGTH
 INDEX_CHANNEL = [1]          # channel index
 
 # Thresholding constant 
-rms_constant = .8
+rms_constant = 1.0
 
 if __name__ == "__main__":
+    # Create signal client to send messages to main GUI
+    signal_client = PlotSignals(is_server=False)
+    
     # Connect to LSL stream
     print('Looking for an EEG stream...')
+    signal_client.send_message("status", "Focus plot: Looking for an EEG stream...")
+    
     streams = resolve_byprop('type', 'EEG', timeout=2)
     if not streams:
+        signal_client.send_message("status", "Focus plot: EEG stream not found!")
         raise RuntimeError("Can't find EEG stream.")
+        
     inlet = StreamInlet(streams[0], max_chunklen=12)
     fs = int(inlet.info().nominal_srate())
     print("Sampling frequency:", fs, "Hz")
+    signal_client.send_message("status", "Focus plot: Connected to EEG stream!")
     
     # Initialize EEG and band buffers
     eeg_buffer = np.zeros((int(fs * BUFFER_LENGTH), 1))
@@ -41,6 +50,23 @@ if __name__ == "__main__":
     # Setup plot
     plt.ion()
     fig, ax = plt.subplots(figsize=(12, 6))
+    
+    # Create a list for focus levels
+    focus_levels = []
+    
+    # Create a reset button
+    plt.subplots_adjust(bottom=0.2)  # Make space for the button
+    ax_button = plt.axes([0.7, 0.05, 0.2, 0.075])  # [left, bottom, width, height]
+    reset_button = Button(ax_button, 'Reset Threshold')
+    
+    # Button click callback function
+    def reset_threshold(event):
+        global focus_levels  # Changed from nonlocal to global
+        focus_levels = []
+        print("Threshold reset!")
+    
+    reset_button.on_clicked(reset_threshold)
+    
     times = deque(maxlen=500)         # Time stamps
     beta_values = deque(maxlen=500)     # Beta power values
     line_beta, = ax.plot([], [], label="Beta Power")
@@ -53,8 +79,6 @@ if __name__ == "__main__":
     start_time = time.time()
     
     prev_state = None  
-
-    focus_levels = []  # history of beta values
     
     try:
         while True:
@@ -74,11 +98,13 @@ if __name__ == "__main__":
             # Compute beta power metric
             beta_metric = -smooth_band_powers[Band.Beta]
             focus_levels.append(beta_metric)
-            current_threshold = np.sqrt(np.mean(np.square(focus_levels))) * rms_constant
+            current_threshold = np.sqrt(np.mean(np.square(focus_levels))) * rms_constant if focus_levels else 0.25
             
             # Thresholding with state change detection 
             new_state = "above" if beta_metric > current_threshold else "below"
             if prev_state is not None and new_state != prev_state:
+                # Send a message to the main GUI before printing
+                signal_client.send_message("focus", new_state=="above")
                 print("Above threshold" if new_state=="above" else "Below threshold")
             prev_state = new_state
             
@@ -98,5 +124,7 @@ if __name__ == "__main__":
             fig.canvas.flush_events()
     except KeyboardInterrupt:
         plt.ioff()
+        signal_client.send_message("status", "Focus plot: Closed")
         print("Closing!")
+        signal_client.stop()
 
