@@ -206,11 +206,13 @@ class EEGMonitorGUI(QWidget):
             self.movement_display.setText("⬅️" )
             self.bluetooth_thread.send_command("MOVE_LEFT")
             if "⬆️" in current_display:
+                self.movement_display.setText("⬆️")
                 self.bluetooth_thread.send_command("MOVE_FORWARD")
         elif direction == "right":
             self.movement_display.setText("➡️" )
             self.bluetooth_thread.send_command("MOVE_RIGHT")
             if "⬆️" in current_display:
+                self.movement_display.setText("⬆️")
                 self.bluetooth_thread.send_command("MOVE_FORWARD")
 
     def update_focus(self, focused):
@@ -219,7 +221,7 @@ class EEGMonitorGUI(QWidget):
         current_display = self.movement_display.text()
         if focused:
             if "⬆️" not in current_display:
-                self.movement_display.setText(current_display + " ⬆️" if current_display else "⬆️")
+                self.movement_display.setText("⬆️")
             self.bluetooth_thread.send_command("MOVE_FORWARD")
         else:
             self.movement_display.setText(current_display.replace("⬆️", "").strip())
