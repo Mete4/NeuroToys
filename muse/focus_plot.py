@@ -61,16 +61,19 @@ if __name__ == "__main__":
     
     # Button click callback function
     def reset_threshold(event):
-        global focus_levels  # Changed from nonlocal to global
+        global focus_levels, threshold_values 
         focus_levels = []
         print("Threshold reset!")
     
     reset_button.on_clicked(reset_threshold)
     
     times = deque(maxlen=500)         # Time stamps
-    beta_values = deque(maxlen=500)     # Beta power values
+    beta_values = deque(maxlen=500)   # Beta power values
+    threshold_values = deque(maxlen=500)  # Threshold history
+    
     line_beta, = ax.plot([], [], label="Beta Power")
-    line_thresh, = ax.plot([], [], 'r--', label="Threshold")
+    line_thresh, = ax.plot([], [], 'r--', label="Threshold") 
+    
     ax.set_ylim(-.5, 1)                
     ax.set_title('Beta Concentration Over Time')
     ax.set_xlabel('Time (s)')
@@ -112,12 +115,13 @@ if __name__ == "__main__":
             current_time = time.time() - start_time
             times.append(current_time)
             beta_values.append(beta_metric)
+            threshold_values.append(current_threshold)  
             
             line_beta.set_xdata(list(times))
             line_beta.set_ydata(list(beta_values))
-            if times:
-                xmin, xmax = ax.get_xlim()
-                line_thresh.set_data([xmin, xmax], [current_threshold, current_threshold])
+            
+            line_thresh.set_xdata(list(times))
+            line_thresh.set_ydata(list(threshold_values))
             
             ax.set_xlim(max(0, current_time - 100), current_time + 0.5)
             fig.canvas.draw()

@@ -3,9 +3,14 @@ import asyncio
 import subprocess
 import os
 import threading
+import argparse  # Added import for command-line argument parsing
 from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QLabel, QFrame
-from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import QThread, pyqtSignal, QTimer  # Added QTimer import
+
+sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'Bluetooth/bluetooth_setup'))
 from bluetooth import BluetoothController
+from muselsl import stream, list_muses
+
 from signals import PlotSignals
 
 class BluetoothThread(QThread):
@@ -148,6 +153,9 @@ class EEGMonitorGUI(QWidget):
         self.bluetooth_thread = BluetoothThread()  # Bluetooth handler
         self.signal_thread = None
         self.eeg_thread = None
+        self.direction_timer = QTimer()  # Create a timer for direction display
+        self.direction_timer.timeout.connect(self.reset_direction_display)
+        self.direction_timer.setSingleShot(True)  # Timer will only fire once
 
     def initUI(self):
         layout = QVBoxLayout()
@@ -202,34 +210,60 @@ class EEGMonitorGUI(QWidget):
         """Updates movement display based on detected blink direction and sends Bluetooth command."""
         current_display = self.movement_display.text()
         print("Blink Direction:", direction)
+        
+        # Store whether we're moving forward
+        is_moving_forward = "Moving Forward" in current_display
+        
         if direction == "left":
-            self.movement_display.setText("⬅️" )
+            self.movement_display.setText("Moving Left")
             self.bluetooth_thread.send_command("MOVE_LEFT")
-            if "⬆️" in current_display:
-                self.movement_display.setText("⬆️")
-                self.bluetooth_thread.send_command("MOVE_FORWARD")
+            # Start the timer to reset the display after 0.5 seconds
+            self.direction_timer.start(500)  # 500 ms = 0.5 seconds
         elif direction == "right":
-            self.movement_display.setText("➡️" )
+            self.movement_display.setText("Moving Right")
             self.bluetooth_thread.send_command("MOVE_RIGHT")
-            if "⬆️" in current_display:
-                self.movement_display.setText("⬆️")
+            # Start the timer to reset the display after 0.5 seconds
+            self.direction_timer.start(500)  # 500 ms = 0.5 seconds
+    
+    def reset_direction_display(self):
+        """Reset the direction display after the timer expires"""
+        # If we were previously moving forward, restore that state
+        if "Moving Left" in self.movement_display.text() or "Moving Right" in self.movement_display.text():
+            if self.direction_timer.property("was_moving_forward"):
+                self.movement_display.setText("Moving Forward")
                 self.bluetooth_thread.send_command("MOVE_FORWARD")
+            else:
+                self.movement_display.setText("Stop")  # Clear the display
 
     def update_focus(self, focused):
         """Updates movement display based on focus detection and sends Bluetooth command."""
         print("Focused:", focused)
         current_display = self.movement_display.text()
+        
+        # If showing a temporary direction message, store whether we should 
+        # return to "Moving Forward" when the timer expires
+        if "Moving Left" in current_display or "Moving Right" in current_display:
+            self.direction_timer.setProperty("was_moving_forward", focused)
+        
         if focused:
-            if "⬆️" not in current_display:
-                self.movement_display.setText("⬆️")
+            if "Moving Forward" not in current_display and "Moving Left" not in current_display and "Moving Right" not in current_display:
+                self.movement_display.setText("Moving Forward")
             self.bluetooth_thread.send_command("MOVE_FORWARD")
         else:
-            self.movement_display.setText(current_display.replace("⬆️", "").strip())
+            current_display = self.movement_display.text()
+            if "Moving Left" not in current_display and "Moving Right" not in current_display:
+                self.movement_display.setText(current_display.replace("Moving Forward", "Stop").strip())
             self.bluetooth_thread.send_command("STOP")
 
     def update_eeg_status(self, status):
         """Updates EEG status and enables Bluetooth + plot buttons when connected."""
         self.eeg_status_label.setText(f"EEG Status: {status}")
+        
+        # Check if EEG stream was not found and exit program if so
+        if "EEG stream not found!" in status:
+            print("EEG stream not found. Closing application...")
+            QTimer.singleShot(2000, lambda: QApplication.quit())  # Wait 2 seconds before quitting
+            return
         
         # Enable Bluetooth button if both plots are connected
         if ("Focus plot: Connected" in status or "Blink plot: Connected" in status):
@@ -255,8 +289,46 @@ class EEGMonitorGUI(QWidget):
             
         event.accept()
 
+def run_stream_in_thread(address):
+    """Run stream in a thread with its own event loop"""
+    import asyncio
+    from muselsl import stream
+    
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    try:
+        stream(address)
+    except Exception as e:
+        print(f"Error in streaming thread: {e}")
 
 if __name__ == "__main__":
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='EEG Car Monitor')
+    parser.add_argument('--stream', action='store_true', help='Start streaming EEG data from Muse')
+    args = parser.parse_args()
+    
+    if args.stream:
+        # Find available Muse devices
+        muses = list_muses()
+        
+        if not muses:
+            print("No Muse devices found.")
+            print("Continuing without streaming...")
+        else:
+            # Connect to the first available device
+            print(f"Connecting to {muses[0]['name']} ({muses[0]['address']})...")
+            print("Press Ctrl+C to disconnect.")
+            
+            # Start streaming in a thread with proper event loop setup
+            streaming_thread = threading.Thread(target=run_stream_in_thread, args=(muses[0]['address'],))
+            streaming_thread.daemon = True
+            streaming_thread.start()
+    else:
+        print("Running without direct connection to Muse headset.")
+        print("Use --stream parameter to connect and stream from Muse.")
+    
+    # Continue with the GUI application
     app = QApplication(sys.argv)
     window = EEGMonitorGUI()
     window.show()
