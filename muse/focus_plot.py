@@ -29,17 +29,17 @@ if __name__ == "__main__":
     
     # Connect to LSL stream
     print('Looking for an EEG stream...')
-    signal_client.send_message("status", "Focus plot: Looking for an EEG stream...")
+    signal_client.send_message("status", " Looking for an EEG stream...")
     
     streams = resolve_byprop('type', 'EEG', timeout=2)
     if not streams:
-        signal_client.send_message("status", "Focus plot: EEG stream not found!")
+        signal_client.send_message("status", " EEG stream not found!")
         raise RuntimeError("Can't find EEG stream.")
         
     inlet = StreamInlet(streams[0], max_chunklen=12)
     fs = int(inlet.info().nominal_srate())
     print("Sampling frequency:", fs, "Hz")
-    signal_client.send_message("status", "Focus plot: Connected to EEG stream!")
+    signal_client.send_message("status", " Connected to EEG stream!")
     
     # Initialize EEG and band buffers
     eeg_buffer = np.zeros((int(fs * BUFFER_LENGTH), 1))
