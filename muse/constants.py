@@ -63,4 +63,22 @@ LOG_LEVELS = {
     'critical': logging.CRITICAL
 }
 
+# --- Constants Added/Modified for direct use ---
+# Buffer window size for blink detection (similar to VIEW_BUFFER)
+BLINK_WINDOW_SECONDS = 5
+# Subsampling factor (can be kept low as no plotting)
+SUBSAMPLE = 1
+# Blink detection parameters (from blink_plot.py)
+BLINK_SPIKE_THRESHOLD = 200
+BLINK_SPIKE_MIN_DISTANCE = 50 # Samples
+BLINK_SPIKE_PROMINENCE = 30
+BLINK_MAX_INTERVAL = 0.2 # Seconds
+BLINK_COOLDOWN = 0.1 # Seconds
 
+# Focus detection parameters (from focus_plot.py)
+FOCUS_BUFFER_LENGTH = 5            # seconds of EEG data buffer
+FOCUS_EPOCH_LENGTH = 1             # seconds for FFT
+FOCUS_OVERLAP_LENGTH = 0.8         # seconds overlap between epochs
+FOCUS_SHIFT_LENGTH = FOCUS_EPOCH_LENGTH - FOCUS_OVERLAP_LENGTH # seconds
+FOCUS_INDEX_CHANNEL = [1]          # Use channel index 1 (e.g., TP9)
+FOCUS_RMS_CONSTANT = 1.0           # Thresholding constant
