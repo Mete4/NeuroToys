@@ -233,7 +233,7 @@ class EEGMonitorGUI(QWidget):
         layout.addWidget(self.connect_bluetooth_button)
 
         plots_layout = QVBoxLayout()
-        left_right_layout = QHBoxLayout() #ss
+        left_right_layout = QHBoxLayout() #sss
 
         # Blink Plot
         self.blink_figure = Figure(figsize=(5, 4)) # side-by-side size
