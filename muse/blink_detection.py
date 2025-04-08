@@ -3,6 +3,7 @@ from scipy.signal import lfilter, lfilter_zi, firwin, butter, find_peaks
 from time import sleep, time
 from pylsl import StreamInlet, resolve_byprop
 from PyQt6.QtCore import QObject, pyqtSignal
+from collections import deque
 
 import constants as C
 import utils
@@ -95,6 +96,8 @@ class BlinkDetector(QObject):
         self.plot_channel_indices_map = {} # Map global index (AF7/AF8) to name
         self.ch_names = []
         self.last_blink_time = 0
+        self.both_blink_last_time = 0
+        self.reverse_cooldown = 2.0 #seconds
         self.detected_blinks_timestamps = set() # Store raw timestamps for cooldown
         self.blink_plot_markers = [] # Store [ts, value] for plotting
 
@@ -229,7 +232,23 @@ class BlinkDetector(QObject):
 
                     # Add new markers to the list for next emit
                     markers_since_last_emit.extend(newly_detected_blinks_in_chunk)
-
+                    af7_blinks = [ts for ts, val in newly_detected_blinks_in_chunk if val > 0 and 'AF7' in self.plot_channel_indices_map.values()]
+                    af8_blinks = [ts for ts, val in newly_detected_blinks_in_chunk if val > 0 and 'AF8' in self.plot_channel_indices_map.values()]
+                    both_blinks = []
+                    #START OF REVERSE LOGIC
+                    for af7_ts in af7_blinks:
+                        for af8_ts in af8_blinks:
+                            if abs(af7_ts - af8_ts) < 0.4: # threshold for double
+                                both_blinks.append(max(af7_ts, af8_ts))
+                    
+                    current_time = time()
+                    for blink_ts in both_blinks:
+                        if current_time - self.both_blink_last_time > self.reverse_cooldown:
+                            print(f"Blink Detector: Detected DOUBLE EYE BLINK @ {blink_ts:.3f}s (Toggle Reverse)")
+                            self.blinkDetected.emit("toggle_reverse")
+                            self.both_blink_last_time = current_time
+                            break #only trigger once per run
+                    #END OF REVERSE LOGIC
                     # Prepare and Emit Plot Data 
                     self.plot_update_counter += 1
                     if self.plot_update_counter >= self.plot_update_interval:

@@ -173,6 +173,7 @@ class EEGMonitorGUI(QWidget):
         self.blink_detector_connected = False
         self.focus_detector_connected = False
         self.is_moving_forward = False
+        self.reverse_mode = False
         # Timers
         self.direction_timer = QTimer(self)
         self.direction_timer.setSingleShot(True)
@@ -208,6 +209,12 @@ class EEGMonitorGUI(QWidget):
         self.movement_display.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
         self.movement_display.setStyleSheet("font-size: 32px; text-align: center; padding: 10px;")
         layout.addWidget(self.movement_display)
+
+        #REVERSE GUI LOGIC
+        self.direction_mode_label = QLabel("Direction: FORWARD")
+        self.direction_mode_label.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
+        self.direction_mode_label.setStyleSheet("font-size: 20px; text-align: center; padding: 6px;")
+        layout.addWidget(self.direction_mode_label)
 
         # Buttons
         self.scan_stream_button = QPushButton("Scan and Start Muse Stream") 
@@ -580,7 +587,7 @@ class EEGMonitorGUI(QWidget):
             print("GUI: Stopping BT thread after connection loss signal.")
             self.bluetooth_thread.stop_thread()
         self.bluetooth_thread = None
-
+    '''
     def update_movement(self, direction):
         print(f"GUI: Blink received: {direction}")
         if not self._check_bluetooth_connection():
@@ -594,6 +601,39 @@ class EEGMonitorGUI(QWidget):
         elif direction == "right":
             display_text = "Moving Right"
             command = "MOVE_RIGHT"
+        if command:
+            self.movement_display.setText(display_text)
+            self.direction_timer.start(500)
+            self.bluetooth_thread.send_command(command)
+    '''
+    def update_movement(self, direction):
+        print(f"GUI: Blink received: {direction}")
+        if not self._check_bluetooth_connection():
+            print("GUI: Bluetooth not connected, ignoring blink.")
+            return
+
+        if direction == "toggle_reverse":
+            self.reverse_mode = not self.reverse_mode
+            mode_text = "REVERSE" if self.reverse_mode else "FORWARD"
+            self.direction_mode_label.setText(f"Direction: {mode_text}")
+            print(f"GUI: Reverse mode toggled -> Now {mode_text}")
+            # If moving, update move command to reflect direction
+            if self.is_moving_forward:
+                move_cmd = "MOVE_REVERSE" if self.reverse_mode else "MOVE_FORWARD"
+                self.bluetooth_thread.send_command(move_cmd)
+                self.movement_display.setText(f"Moving {mode_text}")
+            return
+
+        # Normal left/right blink control
+        command = None
+        display_text = ""
+        if direction == "left":
+            display_text = "Moving Left"
+            command = "MOVE_LEFT"
+        elif direction == "right":
+            display_text = "Moving Right"
+            command = "MOVE_RIGHT"
+
         if command:
             self.movement_display.setText(display_text)
             self.direction_timer.start(500)
@@ -622,10 +662,12 @@ class EEGMonitorGUI(QWidget):
             self.movement_display.setText("Stop")
             return
         command = None
+        #MODIFIED FOR REVERSE
         if not self.direction_timer.isActive():
             if focused:
-                self.movement_display.setText("Moving Forward")
-                command = "MOVE_FORWARD"
+                mode = "REVERSE" if self.reverse_mode else "FORWARD"
+                self.movement_display.setText(f"Moving {mode}")
+                command = "MOVE_REVERSE" if self.reverse_mode else "MOVE_FORWARD"
             else:
                 self.movement_display.setText("Stop")
                 command = "STOP"
