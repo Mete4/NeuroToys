@@ -184,6 +184,8 @@ class EEGMonitorGUI(QWidget):
         self.blink_ax = None
         self.blink_lines = {} #  {'AF7': line, 'AF8': line}
         self.blink_markers = None
+        # Add persistent marker list for GUI
+        self.gui_blink_markers_list = []
         self.focus_canvas = None
         self.focus_ax = None
         self.focus_beta_line = None
@@ -208,7 +210,7 @@ class EEGMonitorGUI(QWidget):
         layout.addWidget(self.movement_display)
 
         # Buttons
-        self.scan_stream_button = QPushButton("Scan & Start Muse Stream") 
+        self.scan_stream_button = QPushButton("Scan and Start Muse Stream") 
         self.scan_stream_button.clicked.connect(self.scan_and_start_muse)
         self.scan_stream_button.setEnabled(list_muses is not None)
         if list_muses is None: self.scan_stream_button.setToolTip("muselsl library not found")
@@ -234,7 +236,7 @@ class EEGMonitorGUI(QWidget):
         # Empty lines for AF7, AF8
         self.blink_lines['AF7'], = self.blink_ax.plot([], [], lw=1, label='AF7')
         self.blink_lines['AF8'], = self.blink_ax.plot([], [], lw=1, label='AF8')
-        self.blink_markers = self.blink_ax.scatter([], [], c='yellow', marker='*', s=200, label='Blinks', zorder=3) # Changed color
+        self.blink_markers = self.blink_ax.vlines([], [], [], color='green', linewidth=1, label='Blinks', zorder=3) # vertical lines instead of stars
         self.blink_ax.set_ylim(-1500, 1500) 
         self.blink_ax.set_xlim(-C.BLINK_WINDOW_SECONDS, 0)
         self.blink_ax.set_title('Blink Detection (AF7/AF8)')
@@ -333,7 +335,7 @@ class EEGMonitorGUI(QWidget):
     def on_muse_scan_complete(self, muses):
         """ Handles the result of the Muse scan received via signal """
         print(f"GUI Thread: Scan complete signal received. Muses: {muses}")
-        self.scan_stream_button.setText("Scan & Start Muse Stream") 
+        self.scan_stream_button.setText("Scan and Start Muse Stream") 
 
         if muses: 
             selected_muse = muses[0]
@@ -368,7 +370,7 @@ class EEGMonitorGUI(QWidget):
         if self.streaming_thread and not self.streaming_thread.is_alive():
              print("Error: Muse streaming thread exited unexpectedly.")
              self.eeg_status_label.setText("Status: Failed to start Muse LSL stream.")
-             self.scan_stream_button.setText("Scan & Start Muse Stream")
+             self.scan_stream_button.setText("Scan and Start Muse Stream")
              self.scan_stream_button.setEnabled(True)
              self.streaming_thread = None
         elif self.streaming_thread and self.streaming_thread.is_alive():
@@ -416,8 +418,18 @@ class EEGMonitorGUI(QWidget):
 
 
     # Plot Update 
-    def update_blink_plot(self, timestamps, channel_data_dict, blink_markers_data):
+    def update_blink_plot(self, timestamps, channel_data_dict, new_blink_markers):
         if not timestamps.any() or not self.blink_canvas: return 
+
+        # Add newly received markers to the persistent list
+        self.gui_blink_markers_list.extend(new_blink_markers)
+
+        # Filter the persistent list based on the current timestamp window
+        min_plot_time = timestamps[0]
+        max_plot_time = timestamps[-1]
+        # Keep markers within the received timestamp range
+        self.gui_blink_markers_list = [m for m in self.gui_blink_markers_list 
+                                     if min_plot_time <= m[0] <= max_plot_time]
 
         # Make time relative to the end
         relative_times = timestamps - timestamps[-1]
@@ -428,15 +440,22 @@ class EEGMonitorGUI(QWidget):
                 subsample = C.SUBSAMPLE # Adjust subsampling factor
                 line.set_data(relative_times[::subsample], channel_data_dict[name][::subsample])
 
-        # Update blink markers
-        # print(f"Blink markers data: {blink_markers_data}")
-        if blink_markers_data:
-            marker_times = np.array([m[0] for m in blink_markers_data])
-            marker_vals = np.array([m[1] for m in blink_markers_data])
-            relative_marker_times = marker_times - timestamps[-1] # Make marker times relative 
-            self.blink_markers.set_offsets(np.c_[relative_marker_times, marker_vals])
+        # Update blink markers using the filtered persistent list - vertical lines version
+        if self.gui_blink_markers_list:
+            # Extract marker times and convert to relative times
+            marker_times = np.array([m[0] for m in self.gui_blink_markers_list])
+            relative_marker_times = marker_times - timestamps[-1]
+            
+            # Get corresponding y values for vertical lines (from bottom to top of plot)
+            ymin = np.full(len(relative_marker_times), -1500)  # Bottom of plot
+            ymax = np.full(len(relative_marker_times), 1500)   # Top of plot
+            
+            # Update vertical lines
+            self.blink_markers.set_segments([np.array([[x, y1], [x, y2]]) 
+                                           for x, y1, y2 in zip(relative_marker_times, ymin, ymax)])
         else:
-            self.blink_markers.set_offsets(np.c_[[], []]) # Clear markers
+            # Clear markers by setting empty segments
+            self.blink_markers.set_segments([])
 
         # Adjust axes and redraw
         self.blink_ax.set_xlim(-C.BLINK_WINDOW_SECONDS, 0)
@@ -496,7 +515,9 @@ class EEGMonitorGUI(QWidget):
             
         blink_status = "OK" if self.blink_detector_connected else "Wait"
         focus_status = "OK" if self.focus_detector_connected else "Wait"
-        if not self.blink_thread and not self.focus_thread: blink_status = "Off"; focus_status = "Off"
+        if not self.blink_thread and not self.focus_thread:
+            blink_status = "Off"
+            focus_status = "Off"
         muse_stream_status_str = "" 
         if self.streaming_thread and self.streaming_thread.is_alive(): muse_stream_status_str = "Muse: Streaming | "
         elif self.scan_stream_button.text() == "Scanning...": muse_stream_status_str = "Muse: Scanning | "
@@ -630,7 +651,6 @@ class EEGMonitorGUI(QWidget):
             self.focus_thread.wait(1000)
 
     def on_detector_finished(self):
-        # (Unchanged)
         sender_obj = self.sender()
         print(f"GUI: Detector object finished signal: {type(sender_obj).__name__}")
 

@@ -103,8 +103,8 @@ class BlinkDetector(QObject):
         self.af_fir = [1.0]
 
         self.plot_update_counter = 0
-        # Update plot 5 times per second 
-        self.plot_update_interval = max(1, int(self.sfreq / C.LSL_EEG_CHUNK / 5))
+        # Update plot every chunk with data 
+        self.plot_update_interval = 1
 
     def _initialize_stream(self):
         self.statusUpdate.emit("Blink Detector: Looking for EEG stream...")
@@ -159,6 +159,9 @@ class BlinkDetector(QObject):
         if not self._initialize_stream():
             self._running = False; self.finished.emit(); return
 
+        # Store markers detected since last plot emit
+        markers_since_last_emit = []
+
         while self._running:
             try:
                 samples, timestamps = self.inlet.pull_chunk(timeout=1.0, max_samples=C.LSL_EEG_CHUNK)
@@ -175,7 +178,8 @@ class BlinkDetector(QObject):
                     # Apply FIR filter 
 
                     current_time = time()
-                    newly_detected_blinks = [] # Store blinks detected in this chunk for plotting
+                    # Use temporary list for markers in this chunk
+                    newly_detected_blinks_in_chunk = []
 
                     for global_chan_idx in self.channel_indices:
                         channel_name = self.plot_channel_indices_map[global_chan_idx]
@@ -214,14 +218,17 @@ class BlinkDetector(QObject):
                                         buffer_idx = np.argmin(time_diff)
                                         # Use the value from the bandpassed data for the marker
                                         marker_value = bp_data[buffer_idx]
-                                        newly_detected_blinks.append([blink_ts, marker_value])
+                                        newly_detected_blinks_in_chunk.append([blink_ts, marker_value])
                                     else:
-                                         newly_detected_blinks.append([blink_ts, 0]) # Fallback marker value
+                                         newly_detected_blinks_in_chunk.append([blink_ts, 0]) # Fallback marker value
 
 
                                     direction = "left" if channel_name == 'AF7' else "right"
                                     print(f"Blink Detector: Detected {direction} blink @ {blink_ts:.3f}s")
                                     self.blinkDetected.emit(direction)
+
+                    # Add new markers to the list for next emit
+                    markers_since_last_emit.extend(newly_detected_blinks_in_chunk)
 
                     # Prepare and Emit Plot Data 
                     self.plot_update_counter += 1
@@ -231,24 +238,21 @@ class BlinkDetector(QObject):
                         # Get the filtered data for the plot channels
                         for global_idx in self.channel_indices:
                             ch_name = self.plot_channel_indices_map[global_idx]
-                            # Apply the 0.5-5Hz filter again for consistent plot data
-                            # Alternatively, could maintain a fully filtered buffer
+                            # Apply the 0.5-5Hz filter again for consistent plot data or could maintain a fully filtered buffer
                             plot_data_ch = (bandpass_butter(self.data_buffer[:, global_idx], 0.5, 5, self.sfreq, order=4))
                             # plot_data_ch = abs(self.data_buffer[:, global_idx])
                             plot_ch_data[ch_name] = plot_data_ch
 
-                        # Update persistent marker list and remove old ones
-                        self.blink_plot_markers.extend(newly_detected_blinks)
-                        min_plot_time = self.time_buffer[0] # Oldest time in buffer
-                        self.blink_plot_markers = [m for m in self.blink_plot_markers if m[0] >= min_plot_time]
-
+                        # No longer filter blink markers in the detector
+                        # Send only markers collected since last emit
+                        markers_to_send = list(markers_since_last_emit)
+                        markers_since_last_emit = [] # Clear for next interval
+                        
                         # Emit data for plotting
-                        # Make copies to avoid issues if buffer changes during signal processing
                         times_copy = self.time_buffer.copy()
                         plot_ch_data_copy = {k: v.copy() for k, v in plot_ch_data.items()}
-                        markers_copy = list(self.blink_plot_markers) # Copy list
-
-                        self.plotDataReady.emit(times_copy, plot_ch_data_copy, markers_copy)
+                        
+                        self.plotDataReady.emit(times_copy, plot_ch_data_copy, markers_to_send)
 
 
                     # Cleanup old detected blink timestamps for cooldown
