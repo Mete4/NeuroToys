@@ -73,7 +73,7 @@ BLINK_SPIKE_THRESHOLD = 200
 BLINK_SPIKE_MIN_DISTANCE = 50 # Samples
 BLINK_SPIKE_PROMINENCE = 30
 BLINK_MAX_INTERVAL = 0.2 # Seconds
-BLINK_COOLDOWN = 0.1 # Seconds
+BLINK_COOLDOWN = 0.5 # Seconds
 
 # Focus detection parameters (from focus_plot.py)
 FOCUS_BUFFER_LENGTH = 5            # seconds of EEG data buffer

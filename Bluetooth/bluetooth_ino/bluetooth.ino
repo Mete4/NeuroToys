@@ -23,6 +23,7 @@ void Stop();
 void Forward();
 void Left();
 void Right();
+void Reverse(); 
 // Callback class for handling server events
 class MyServerCallbacks : public BLEServerCallbacks
 {
@@ -68,11 +69,16 @@ class MyCallbacks : public BLECharacteristicCallbacks
         Right();
         Serial.println("Right");
       }
+      else if (value == "MOVE_REVERSE")
+      {
+        Reverse();
+        Serial.println("Reverse");
+      }
     }
   }
 };
 
-void Backward()
+void Reverse()
 {
   digitalWrite(in1, LOW);
   digitalWrite(in2, HIGH);

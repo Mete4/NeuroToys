@@ -98,8 +98,15 @@ class BlinkDetector(QObject):
         self.last_blink_time = 0
         self.both_blink_last_time = 0
         self.reverse_cooldown = 2.0 #seconds
+        
+        # Replace global cooldown with per-channel cooldowns
+        self.channel_cooldowns = {'AF7': 0, 'AF8': 0}
+        
         self.detected_blinks_timestamps = set() # Store raw timestamps for cooldown
         self.blink_plot_markers = [] # Store [ts, value] for plotting
+        self.double_blink_threshold = 0.2
+        # New dictionary to track blinks by channel
+        self.blinks = {'AF7': [], 'AF8': []}
 
         # FIR filter
         self.bf_fir = firwin(32, np.array([1, 40]) / (self.sfreq / 2.), width=0.05, pass_zero=False)
@@ -108,6 +115,9 @@ class BlinkDetector(QObject):
         self.plot_update_counter = 0
         # Update plot every chunk with data 
         self.plot_update_interval = 1
+
+        # For delayed blink processing
+        self.pending_blinks = []  # List of [timestamp, direction, expiration_time]
 
     def _initialize_stream(self):
         self.statusUpdate.emit("Blink Detector: Looking for EEG stream...")
@@ -181,8 +191,15 @@ class BlinkDetector(QObject):
                     # Apply FIR filter 
 
                     current_time = time()
+                    
+                    # Process any pending blinks that have passed the waiting period
+                    self._process_pending_blinks(current_time)
+                    
                     # Use temporary list for markers in this chunk
                     newly_detected_blinks_in_chunk = []
+                    
+                    # Reset blinks dictionary for this processing chunk
+                    # self.blinks = {'AF7': [], 'AF8': []}
 
                     for global_chan_idx in self.channel_indices:
                         channel_name = self.plot_channel_indices_map[global_chan_idx]
@@ -208,10 +225,13 @@ class BlinkDetector(QObject):
                             blink_event_times = detect_blink_pattern(pos_peaks_idx, neg_peaks_idx, recent_times)
 
                             for blink_ts in blink_event_times:
-                                # Use raw timestamp for cooldown check
+                                # Use per-channel cooldown instead of global cooldown
                                 if (blink_ts not in self.detected_blinks_timestamps and
-                                    current_time - self.last_blink_time > C.BLINK_COOLDOWN):
+                                    current_time - self.channel_cooldowns[channel_name] > C.BLINK_COOLDOWN):
 
+                                    # Update channel-specific cooldown
+                                    self.channel_cooldowns[channel_name] = current_time
+                                    # We still update global last_blink_time for other features
                                     self.last_blink_time = current_time
                                     self.detected_blinks_timestamps.add(blink_ts)
 
@@ -222,24 +242,46 @@ class BlinkDetector(QObject):
                                         # Use the value from the bandpassed data for the marker
                                         marker_value = bp_data[buffer_idx]
                                         newly_detected_blinks_in_chunk.append([blink_ts, marker_value])
+                                        
+                                        # Add to the channel-specific blink dictionary
+                                        self.blinks[channel_name].append(blink_ts)
                                     else:
                                          newly_detected_blinks_in_chunk.append([blink_ts, 0]) # Fallback marker value
-
+                                         # Add to the channel-specific blink dictionary
+                                         self.blinks[channel_name].append(blink_ts)
 
                                     direction = "left" if channel_name == 'AF7' else "right"
                                     print(f"Blink Detector: Detected {direction} blink @ {blink_ts:.3f}s")
-                                    self.blinkDetected.emit(direction)
+                                    
+                                    # Instead of emitting add to pending blinks
+                                    expiration_time = current_time + self.double_blink_threshold
+                                    self.pending_blinks.append([blink_ts, direction, expiration_time])
+                                    
 
                     # Add new markers to the list for next emit
                     markers_since_last_emit.extend(newly_detected_blinks_in_chunk)
-                    af7_blinks = [ts for ts, val in newly_detected_blinks_in_chunk if val > 0 and 'AF7' in self.plot_channel_indices_map.values()]
-                    af8_blinks = [ts for ts, val in newly_detected_blinks_in_chunk if val > 0 and 'AF8' in self.plot_channel_indices_map.values()]
+                    
+                    # Use the new blinks dictionary for reverse logic
                     both_blinks = []
+                    blinks_to_remove = {'AF7': [], 'AF8': []}  # Track blinks to remove
+                    
                     #START OF REVERSE LOGIC
-                    for af7_ts in af7_blinks:
-                        for af8_ts in af8_blinks:
-                            if abs(af7_ts - af8_ts) < 0.4: # threshold for double
+                    for af7_ts in self.blinks['AF7']:
+                        for af8_ts in self.blinks['AF8']:
+                            print("blink detected at AF7: ", af7_ts, "AF8: ", af8_ts)
+                            if abs(af7_ts - af8_ts) < self.double_blink_threshold:  # threshold for double
                                 both_blinks.append(max(af7_ts, af8_ts))
+                                # Blinks for removal
+                                blinks_to_remove['AF7'].append(af7_ts)
+                                blinks_to_remove['AF8'].append(af8_ts)
+                                
+                                self._remove_from_pending_blinks(af7_ts)
+                                self._remove_from_pending_blinks(af8_ts)
+                    
+                    # Remove blinks that were used in double-blink patterns
+                    for channel in ['AF7', 'AF8']:
+                        self.blinks[channel] = [ts for ts in self.blinks[channel] 
+                                              if ts not in blinks_to_remove[channel]]
                     
                     current_time = time()
                     for blink_ts in both_blinks:
@@ -247,8 +289,9 @@ class BlinkDetector(QObject):
                             print(f"Blink Detector: Detected DOUBLE EYE BLINK @ {blink_ts:.3f}s (Toggle Reverse)")
                             self.blinkDetected.emit("toggle_reverse")
                             self.both_blink_last_time = current_time
-                            break #only trigger once per run
+                            break  # only trigger once per run
                     #END OF REVERSE LOGIC
+                    
                     # Prepare and Emit Plot Data 
                     self.plot_update_counter += 1
                     if self.plot_update_counter >= self.plot_update_interval:
@@ -277,7 +320,13 @@ class BlinkDetector(QObject):
                     # Cleanup old detected blink timestamps for cooldown
                     min_valid_time = time() - max(C.BLINK_WINDOW_SECONDS, 5.0) # Keep history longer than window
                     self.detected_blinks_timestamps = {t for t in self.detected_blinks_timestamps if t >= min_valid_time}
+                    
+                    # Clean up old blinks from the blinks dictionary
+                    for channel in self.blinks:
+                        self.blinks[channel] = [ts for ts in self.blinks[channel] if ts >= time() - 2*self.double_blink_threshold]
 
+                    # Process any remaining pending blinks again before exiting the loop iteration
+                    self._process_pending_blinks(current_time)
 
                 else: sleep(0.05)
             except Exception as e:
@@ -293,3 +342,29 @@ class BlinkDetector(QObject):
     def stop(self):
         self.statusUpdate.emit("Blink Detector: Stopping...")
         self._running = False
+
+    def _process_pending_blinks(self, current_time):
+        """Process pending blinks that have passed their waiting period"""
+        blinks_to_emit = []
+        remaining_blinks = []
+        
+        for blink_ts, direction, expiration_time in self.pending_blinks:
+            if current_time >= expiration_time:
+                # This blink has waited long enough without finding a match
+                blinks_to_emit.append((blink_ts, direction))
+            else:
+                # This blink is still within its waiting period
+                remaining_blinks.append([blink_ts, direction, expiration_time])
+        
+        # Update the pending blinks list
+        self.pending_blinks = remaining_blinks
+        
+        # Emit signals for blinks that waited long enough
+        for blink_ts, direction in blinks_to_emit:
+            print(f"Blink Detector: Emitting delayed {direction} blink @ {blink_ts:.3f}s")
+            self.blinkDetected.emit(direction)
+    
+    def _remove_from_pending_blinks(self, blink_ts, tolerance=0.05):
+        """Remove a blink from pending blinks based on timestamp"""
+        self.pending_blinks = [pb for pb in self.pending_blinks 
+                              if abs(pb[0] - blink_ts) > tolerance]
