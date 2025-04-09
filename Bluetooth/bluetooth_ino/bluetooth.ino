@@ -8,7 +8,7 @@
 #define in2 2
 #define in3 4
 #define in4 16
-
+#define rev_LED 17
 // BLE server name
 #define DEVICE_NAME "ESP_CAR"
 
@@ -24,6 +24,8 @@ void Forward();
 void Left();
 void Right();
 void Reverse(); 
+void Reverse_LED_ON();
+void Reverse_LED_OFF();
 // Callback class for handling server events
 class MyServerCallbacks : public BLEServerCallbacks
 {
@@ -74,6 +76,12 @@ class MyCallbacks : public BLECharacteristicCallbacks
         Reverse();
         Serial.println("Reverse");
       }
+      else if(value == "REVERSE_LED_ON"){
+        Reverse_LED_ON();
+      }
+      else if(value == "REVERSE_LED_OFF"){
+        Reverse_LED_OFF();
+      }
     }
   }
 };
@@ -122,6 +130,13 @@ void Stop()
   digitalWrite(in4, LOW);
 }
 
+void Reverse_LED_ON(){
+  digitalWrite(rev_LED, HIGH);
+}
+void Reverse_LED_OFF(){
+  digitalWrite(rev_LED, LOW);
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -131,6 +146,7 @@ void setup()
   pinMode(in2, OUTPUT);
   pinMode(in3, OUTPUT);
   pinMode(in4, OUTPUT);
+  pinMode(rev_LED, OUTPUT);
   Stop();
   delay(2000);
   Left();
@@ -140,6 +156,14 @@ void setup()
   Forward();
   delay(2000);
   Stop();
+  delay(2000);
+  Reverse_LED_ON();
+  delay(2000);
+  Reverse();
+  delay(2000);
+  Reverse_LED_OFF();
+  Stop();
+
 
   // Create the BLE Device
   BLEDevice::init(DEVICE_NAME);
