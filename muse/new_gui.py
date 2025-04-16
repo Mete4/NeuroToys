@@ -919,6 +919,10 @@ class EEGMonitorGUI(QWidget):
         if direction == "toggle_reverse":
             self.reverse_mode = not self.reverse_mode
             mode_text = "REVERSE" if self.reverse_mode else "FORWARD"
+            if(mode_text == "REVERSE"):
+                self.bluetooth_thread.send_command("REVERSE_LED_ON")
+            if(mode_text == "FORWARD"):
+                self.bluetooth_thread.send_command("REVERSE_LED_OFF")
             self.direction_mode_label.setText(f"Direction: {mode_text}")
             print(f"GUI: Reverse mode toggled -> Now {mode_text}")
             # If moving, update move command to reflect direction
