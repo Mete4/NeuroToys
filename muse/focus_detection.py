@@ -34,6 +34,16 @@ class FocusDetector(QObject):
         self.prev_state = None
         self.n_win_band = int(np.floor((C.FOCUS_BUFFER_LENGTH - C.FOCUS_EPOCH_LENGTH) / C.FOCUS_SHIFT_LENGTH + 1))
         self.start_time = time() # Record start time for relative plot timestamps
+        
+        # New manual threshold parameters
+        self.use_manual_threshold = False
+        self.manual_threshold_value = 0.5
+
+    def set_manual_threshold(self, threshold_value, enabled=True):
+        """Set the manual threshold value and enable/disable manual mode"""
+        self.manual_threshold_value = threshold_value
+        self.use_manual_threshold = enabled
+        print(f"Focus Detector: Manual threshold {'enabled' if enabled else 'disabled'}, value: {threshold_value:.2f}")
 
     def _initialize_stream(self):
         self.statusUpdate.emit("Focus Detector: Looking for EEG stream...")
@@ -85,7 +95,12 @@ class FocusDetector(QObject):
                     max_history = int(3 * 60 / C.FOCUS_SHIFT_LENGTH); # ~3 mins history
                     if len(self.focus_levels) > max_history: self.focus_levels = self.focus_levels[-max_history:]
 
-                    current_threshold = np.sqrt(np.mean(np.square(self.focus_levels))) * C.FOCUS_RMS_CONSTANT if len(self.focus_levels) > 0 else 0.25
+                    # Use manual threshold if enabled, otherwise calculate automatically
+                    if self.use_manual_threshold:
+                        current_threshold = self.manual_threshold_value
+                    else:
+                        current_threshold = np.sqrt(np.mean(np.square(self.focus_levels))) * C.FOCUS_RMS_CONSTANT if len(self.focus_levels) > 0 else 0.25
+                    
                     new_state = beta_metric > current_threshold
 
                     current_plot_time = time() - self.start_time # Time relative to start
@@ -93,7 +108,9 @@ class FocusDetector(QObject):
 
                     if self.prev_state is None or new_state != self.prev_state:
                         self.focusStateChanged.emit(new_state)
-                        print(f"Focus Detector: State changed to {'FOCUSED' if new_state else 'UNFOCUSED'} (Metric: {beta_metric:.3f}, Thr: {current_threshold:.3f})")
+                        threshold_type = "manual" if self.use_manual_threshold else "auto"
+                        print(f"Focus Detector: State changed to {'FOCUSED' if new_state else 'UNFOCUSED'} " 
+                              f"(Metric: {beta_metric:.3f}, {threshold_type} Thr: {current_threshold:.3f})")
                         self.prev_state = new_state
                 else: sleep(0.05)
             except Exception as e:
