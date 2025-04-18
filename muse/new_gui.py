@@ -3,8 +3,8 @@ import asyncio
 import threading
 import numpy as np
 import os
-from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame, QSizePolicy, QSlider, QCheckBox
-from PyQt6.QtCore import QThread, pyqtSignal, QTimer, QEventLoop, Qt
+from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame, QSizePolicy 
+from PyQt6.QtCore import QThread, pyqtSignal, QTimer, QEventLoop
 from time import time
 
 import matplotlib
@@ -266,8 +266,6 @@ class EEGMonitorGUI(QWidget):
     _muse_scan_result_signal = pyqtSignal(object)
     # Signal from BatteryCheckThread
     _battery_level_signal = pyqtSignal(float)
-    # Signal to communicate manual threshold to focus detector
-    _manual_threshold_signal = pyqtSignal(float, bool)
 
     def __init__(self):
         super().__init__()
@@ -297,10 +295,6 @@ class EEGMonitorGUI(QWidget):
         # Connect battery signal to its handler
         self._battery_level_signal.connect(self.on_battery_level_received)
 
-        # Manual threshold settings
-        self.manual_threshold_enabled = False
-        self.manual_threshold_value = 0.25
-
         # Plotting
         self.blink_canvas = None
         self.blink_ax = None
@@ -315,7 +309,6 @@ class EEGMonitorGUI(QWidget):
         self.focus_times = deque(maxlen=500)
         self.focus_beta_values = deque(maxlen=500)
         self.focus_threshold_values = deque(maxlen=500)
-
         self.initUI()
 
     def initUI(self):
@@ -385,9 +378,7 @@ class EEGMonitorGUI(QWidget):
         self.blink_canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         left_right_layout.addWidget(self.blink_canvas)
 
-        # Focus plot with threshold controls
-        focus_section_layout = QHBoxLayout()
-        
+
         # Focus plot
         self.focus_figure = Figure(figsize=(5, 4)) # side-by-side size
         self.focus_canvas = FigureCanvas(self.focus_figure)
@@ -401,40 +392,8 @@ class EEGMonitorGUI(QWidget):
         self.focus_ax.legend(loc='lower left')
         self.focus_figure.tight_layout()
         self.focus_canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        focus_section_layout.addWidget(self.focus_canvas)
-        
-        # Add vertical threshold controls
-        threshold_controls = QVBoxLayout()
-        
-        # Manual threshold checkbox at the top
-        self.manual_threshold_checkbox = QCheckBox("Manual\nThreshold")
-        self.manual_threshold_checkbox.setChecked(False)
-        self.manual_threshold_checkbox.toggled.connect(self.toggle_manual_threshold)
-        threshold_controls.addWidget(self.manual_threshold_checkbox)
-        
+        left_right_layout.addWidget(self.focus_canvas)
 
-        
-        # Threshold slider in the middle - with fixed height
-        self.threshold_slider = QSlider(Qt.Orientation.Vertical)
-        self.threshold_slider.setMinimum(-50)
-        self.threshold_slider.setMaximum(100)
-        self.threshold_slider.setValue(int(self.manual_threshold_value*100)) 
-        self.threshold_slider.setTickPosition(QSlider.TickPosition.TicksRight)
-        self.threshold_slider.setTickInterval(10)
-        self.threshold_slider.valueChanged.connect(self.update_manual_threshold)
-        self.threshold_slider.setEnabled(False)  # Disabled until manual mode checked
-        self.threshold_slider.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        threshold_controls.addWidget(self.threshold_slider)
-        
-        threshold_controls.addSpacing(50)
-        
-        # Threshold value label at the bottom
-        self.threshold_value_label = QLabel(f"{self.manual_threshold_value:.2f}")
-        self.threshold_value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        threshold_controls.addWidget(self.threshold_value_label)
-        
-        focus_section_layout.addLayout(threshold_controls)
-        left_right_layout.addLayout(focus_section_layout)
 
         # Add the horizontal layout to the main layout
         plots_layout.addLayout(left_right_layout)
@@ -445,47 +404,17 @@ class EEGMonitorGUI(QWidget):
         self.reset_focus_button.clicked.connect(self.reset_focus_threshold_action)
         plots_layout.addWidget(self.reset_focus_button)
 
+        self.calibrate_button = QPushButton("Calibrate Focus Threshold")
+        self.calibrate_button.setEnabled(False)
+        self.calibrate_button.clicked.connect(self.start_calibration_mode)
+        plots_layout.addWidget(self.calibrate_button)
+
         layout.addLayout(plots_layout)
 
         self.setLayout(layout)
         self.setWindowTitle("EEG Car Monitor")
         self.resize(1200, 800)
 
-    
-    def toggle_manual_threshold(self, checked):
-        """Toggle between automatic and manual threshold modes"""
-        # Store previous state to detect transitions
-        was_manual = self.manual_threshold_enabled
-        
-        # Update the current state
-        self.manual_threshold_enabled = checked
-        self.threshold_slider.setEnabled(checked)
-        
-        # If we have a focus detector running, update its threshold mode
-        if self.focus_detector and hasattr(self.focus_detector, 'set_manual_threshold'):
-            self.focus_detector.set_manual_threshold(
-                self.manual_threshold_value, self.manual_threshold_enabled)
-            
-            # If switching from manual to automatic, reset the threshold history
-            if was_manual and not checked:
-                print("GUI: Switching from manual to auto mode - resetting threshold history")
-                self.focus_detector.reset_threshold()
-            
-        print(f"Manual threshold mode {'enabled' if checked else 'disabled'}, " 
-              f"value: {self.manual_threshold_value:.2f}")
-
-    def update_manual_threshold(self, value):
-        """Update the manual threshold value based on slider position"""
-        # Convert slider value (-50,-100) to threshold (-0.5,-1.0)
-        self.manual_threshold_value = (value) / 100.0
-        self.threshold_value_label.setText(f"{self.manual_threshold_value:.2f}")
-        
-        # Update the focus detector if it exists and is in manual mode
-        if self.focus_detector and self.manual_threshold_enabled and hasattr(self.focus_detector, 'set_manual_threshold'):
-            self.focus_detector.set_manual_threshold(
-                self.manual_threshold_value, self.manual_threshold_enabled)
-            
-        print(f"Manual threshold updated to {self.manual_threshold_value:.2f}")
 
     def _perform_scan_and_emit(self):
         """Target function for the scan thread. Sets up loop, runs scan, emits result via signal."""
@@ -684,13 +613,10 @@ class EEGMonitorGUI(QWidget):
         self.focus_thread.finished.connect(self.on_detector_thread_finished)
         # Enable reset button when focus detector starts
         self.focus_thread.finished.connect(lambda: self.reset_focus_button.setEnabled(False))
-        
-        # Set manual threshold if enabled before starting detector
-        if self.manual_threshold_enabled and hasattr(self.focus_detector, 'set_manual_threshold'):
-            self.focus_detector.set_manual_threshold(
-                self.manual_threshold_value, self.manual_threshold_enabled)
-            
         self.focus_thread.start()
+        self.calibrate_button.setEnabled(True)
+        QTimer.singleShot(1500, self.start_calibration_mode)  # Start auto-calibration
+
 
     # Plot Update
     def update_blink_plot(self, timestamps, channel_data_dict, new_blink_markers):
@@ -765,6 +691,62 @@ class EEGMonitorGUI(QWidget):
             print("GUI: Focus threshold reset signal sent to detector.")
         else:
              print("GUI: Cannot reset focus threshold - detector not available.")
+    # START CALIBRATION MODE
+    def start_calibration_mode(self):
+        if not self.focus_detector:
+            print("Calibration Error: Focus detector not initialized.")
+            return
+
+        self.eeg_status_label.setText("Status: Calibration - Please Relax...")
+        self.focus_calibration_data = []
+
+        # Phase 1: Relax
+        self._calibration_phase = "relax"
+        QTimer.singleShot(5000, self._start_focus_phase)
+
+    def _start_focus_phase(self):
+        self.eeg_status_label.setText("Status: Calibration - Now Focus Hard!")
+        self._calibration_phase = "focus"
+        self.focus_calibration_data = []
+        self._calibration_start_time = time()
+        self._calibration_timer = QTimer(self)
+        self._calibration_timer.timeout.connect(self._collect_focus_data)
+        self._calibration_timer.start(200)
+
+    def _collect_focus_data(self):
+        if not hasattr(self, 'focus_beta_values') or not self.focus_beta_values:
+            return
+
+        if time() - self._calibration_start_time > 10:
+            self._calibration_timer.stop()
+            self._finish_calibration()
+            return
+
+        # Save the most recent beta value
+        latest_beta = self.focus_beta_values[-1]
+        self.focus_calibration_data.append(latest_beta)
+
+    def _finish_calibration(self):
+        if self.focus_calibration_data:
+            avg_focus = np.mean(self.focus_calibration_data)
+            new_threshold = avg_focus * C.FOCUS_RMS_CONSTANT * 0.95
+            self.eeg_status_label.setText(f"Calibration Complete. Threshold: {new_threshold:.3f}")
+            print(f"Calibrated focus level: {avg_focus:.3f}, Threshold set to: {new_threshold:.3f}")
+
+            # Temporarily enable manual mode to inject value
+            self.focus_detector.set_manual_threshold(new_threshold, True)
+            self.focus_detector.reset_threshold()
+
+            # Optionally switch back to auto thresholding after calibration
+            QTimer.singleShot(2000, lambda: self.focus_detector.set_manual_threshold(new_threshold, False))
+
+            # Reflect in GUI
+            self.manual_threshold_value = new_threshold
+            self.threshold_slider.setValue(int(new_threshold * 100))
+            self.threshold_value_label.setText(f"{new_threshold:.2f}")
+        else:
+            self.eeg_status_label.setText("Calibration failed. No focus data captured.")
+    # END OF CALIBRATION CODE
 
     def update_detector_status(self, status):
         print(f"Detector Status: {status}")
