@@ -3,8 +3,8 @@ import asyncio
 import threading
 import numpy as np
 import os
-from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame, QSizePolicy 
-from PyQt6.QtCore import QThread, pyqtSignal, QTimer, QEventLoop
+from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame, QSizePolicy, QSlider, QCheckBox
+from PyQt6.QtCore import QThread, pyqtSignal, QTimer, QEventLoop, Qt
 from time import time
 
 import matplotlib
@@ -266,6 +266,8 @@ class EEGMonitorGUI(QWidget):
     _muse_scan_result_signal = pyqtSignal(object)
     # Signal from BatteryCheckThread
     _battery_level_signal = pyqtSignal(float)
+    # Signal to communicate manual threshold to focus detector
+    _manual_threshold_signal = pyqtSignal(float, bool)
 
     def __init__(self):
         super().__init__()
@@ -286,7 +288,6 @@ class EEGMonitorGUI(QWidget):
         self.blink_detector_connected = False
         self.focus_detector_connected = False
         self.is_moving_forward = False
-        self.reverse_mode = False
         # Timers
         self.direction_timer = QTimer(self)
         self.direction_timer.setSingleShot(True)
@@ -294,6 +295,13 @@ class EEGMonitorGUI(QWidget):
         self._muse_scan_result_signal.connect(self.on_muse_scan_complete)
         # Connect battery signal to its handler
         self._battery_level_signal.connect(self.on_battery_level_received)
+
+        # Manual threshold settings
+        self.manual_threshold_enabled = False
+        self.manual_threshold_value = 0.25
+
+        # calibration
+        self.calibration_in_progress = False #block bluetooth commands during calibration
 
         # Plotting
         self.blink_canvas = None
@@ -309,6 +317,7 @@ class EEGMonitorGUI(QWidget):
         self.focus_times = deque(maxlen=500)
         self.focus_beta_values = deque(maxlen=500)
         self.focus_threshold_values = deque(maxlen=500)
+
         self.initUI()
 
     def initUI(self):
@@ -322,8 +331,14 @@ class EEGMonitorGUI(QWidget):
         self.battery_status_label = QLabel("Battery: Unknown")
         self.battery_status_label.setStyleSheet("margin-left: 20px;") # Add some spacing
         status_layout.addWidget(self.battery_status_label)
+
+        self.calibration_status_label = QLabel("Calibration: Idle")
+        self.calibration_status_label.setStyleSheet("margin-left: 20px; color: black;")
+        status_layout.addWidget(self.calibration_status_label)
+
         status_layout.addStretch() 
         layout.addLayout(status_layout)
+
 
         self.bluetooth_status_label = QLabel("Bluetooth Status: Not Connected")
         layout.addWidget(self.bluetooth_status_label)
@@ -332,11 +347,6 @@ class EEGMonitorGUI(QWidget):
         self.movement_display.setStyleSheet("font-size: 32px; text-align: center; padding: 10px;")
         layout.addWidget(self.movement_display)
 
-        #REVERSE GUI LOGIC
-        self.direction_mode_label = QLabel("Direction: FORWARD")
-        self.direction_mode_label.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
-        self.direction_mode_label.setStyleSheet("font-size: 20px; text-align: center; padding: 6px;")
-        layout.addWidget(self.direction_mode_label)
 
         # Buttons
         self.scan_stream_button = QPushButton("Scan and Start Muse Stream")
@@ -378,7 +388,9 @@ class EEGMonitorGUI(QWidget):
         self.blink_canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         left_right_layout.addWidget(self.blink_canvas)
 
-
+        # Focus plot with threshold controls
+        focus_section_layout = QHBoxLayout()
+        
         # Focus plot
         self.focus_figure = Figure(figsize=(5, 4)) # side-by-side size
         self.focus_canvas = FigureCanvas(self.focus_figure)
@@ -392,8 +404,40 @@ class EEGMonitorGUI(QWidget):
         self.focus_ax.legend(loc='lower left')
         self.focus_figure.tight_layout()
         self.focus_canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        left_right_layout.addWidget(self.focus_canvas)
+        focus_section_layout.addWidget(self.focus_canvas)
+        
+        # Add vertical threshold controls
+        threshold_controls = QVBoxLayout()
+        
+        # Manual threshold checkbox at the top
+        self.manual_threshold_checkbox = QCheckBox("Manual\nThreshold")
+        self.manual_threshold_checkbox.setChecked(False)
+        self.manual_threshold_checkbox.toggled.connect(self.toggle_manual_threshold)
+        threshold_controls.addWidget(self.manual_threshold_checkbox)
+        
 
+        
+        # Threshold slider in the middle - with fixed height
+        self.threshold_slider = QSlider(Qt.Orientation.Vertical)
+        self.threshold_slider.setMinimum(-50)
+        self.threshold_slider.setMaximum(100)
+        self.threshold_slider.setValue(int(self.manual_threshold_value*100)) 
+        self.threshold_slider.setTickPosition(QSlider.TickPosition.TicksRight)
+        self.threshold_slider.setTickInterval(10)
+        self.threshold_slider.valueChanged.connect(self.update_manual_threshold)
+        self.threshold_slider.setEnabled(False)  # Disabled until manual mode checked
+        self.threshold_slider.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        threshold_controls.addWidget(self.threshold_slider)
+        
+        threshold_controls.addSpacing(50)
+        
+        # Threshold value label at the bottom
+        self.threshold_value_label = QLabel(f"{self.manual_threshold_value:.2f}")
+        self.threshold_value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        threshold_controls.addWidget(self.threshold_value_label)
+        
+        focus_section_layout.addLayout(threshold_controls)
+        left_right_layout.addLayout(focus_section_layout)
 
         # Add the horizontal layout to the main layout
         plots_layout.addLayout(left_right_layout)
@@ -415,6 +459,41 @@ class EEGMonitorGUI(QWidget):
         self.setWindowTitle("EEG Car Monitor")
         self.resize(1200, 800)
 
+    
+    def toggle_manual_threshold(self, checked):
+        """Toggle between automatic and manual threshold modes"""
+        # Store previous state to detect transitions
+        was_manual = self.manual_threshold_enabled
+        
+        # Update the current state
+        self.manual_threshold_enabled = checked
+        self.threshold_slider.setEnabled(checked)
+        
+        # If we have a focus detector running, update its threshold mode
+        if self.focus_detector and hasattr(self.focus_detector, 'set_manual_threshold'):
+            self.focus_detector.set_manual_threshold(
+                self.manual_threshold_value, self.manual_threshold_enabled)
+            
+            # If switching from manual to automatic, reset the threshold history
+            if was_manual and not checked:
+                print("GUI: Switching from manual to auto mode - resetting threshold history")
+                self.focus_detector.reset_threshold()
+            
+        print(f"Manual threshold mode {'enabled' if checked else 'disabled'}, " 
+              f"value: {self.manual_threshold_value:.2f}")
+
+    def update_manual_threshold(self, value):
+        """Update the manual threshold value based on slider position"""
+        # Convert slider value (-50,-100) to threshold (-0.5,-1.0)
+        self.manual_threshold_value = (value) / 100.0
+        self.threshold_value_label.setText(f"{self.manual_threshold_value:.2f}")
+        
+        # Update the focus detector if it exists and is in manual mode
+        if self.focus_detector and self.manual_threshold_enabled and hasattr(self.focus_detector, 'set_manual_threshold'):
+            self.focus_detector.set_manual_threshold(
+                self.manual_threshold_value, self.manual_threshold_enabled)
+            
+        print(f"Manual threshold updated to {self.manual_threshold_value:.2f}")
 
     def _perform_scan_and_emit(self):
         """Target function for the scan thread. Sets up loop, runs scan, emits result via signal."""
@@ -613,10 +692,15 @@ class EEGMonitorGUI(QWidget):
         self.focus_thread.finished.connect(self.on_detector_thread_finished)
         # Enable reset button when focus detector starts
         self.focus_thread.finished.connect(lambda: self.reset_focus_button.setEnabled(False))
+        
+        # Set manual threshold if enabled before starting detector
+        if self.manual_threshold_enabled and hasattr(self.focus_detector, 'set_manual_threshold'):
+            self.focus_detector.set_manual_threshold(
+                self.manual_threshold_value, self.manual_threshold_enabled)
+            
         self.focus_thread.start()
         self.calibrate_button.setEnabled(True)
-        QTimer.singleShot(1500, self.start_calibration_mode)  # Start auto-calibration
-
+        QTimer.singleShot(1500, self.start_calibration_mode)  # Automatically start calibration after short delay
 
     # Plot Update
     def update_blink_plot(self, timestamps, channel_data_dict, new_blink_markers):
@@ -662,6 +746,66 @@ class EEGMonitorGUI(QWidget):
         self.blink_ax.set_xlim(-C.BLINK_WINDOW_SECONDS, 0)
         self.blink_canvas.draw_idle()
 
+    def start_calibration_mode(self):
+        if not self.focus_detector:
+            print("Calibration Error: Focus detector not initialized.")
+            return
+
+        self.calibration_in_progress = True
+        self.calibration_status_label.setText("Calibration: Relaxing...")
+        self.eeg_status_label.setText("Status: Calibration - Please Relax...")
+        self.focus_calibration_data = []
+
+        self._calibration_phase = "relax"
+        QTimer.singleShot(5000, self._start_focus_phase)
+
+
+    def _start_focus_phase(self):
+        self.calibration_status_label.setText("Calibration: Focusing...")
+        self.eeg_status_label.setText("Status: Calibration in progress...")
+        self._calibration_phase = "focus"
+        self.focus_calibration_data = []
+        self._calibration_start_time = time()
+        self._calibration_timer = QTimer(self)
+        self._calibration_timer.timeout.connect(self._collect_focus_data)
+        self._calibration_timer.start(200)
+
+
+    def _collect_focus_data(self):
+        if not hasattr(self, 'focus_beta_values') or not self.focus_beta_values:
+            return
+
+        if time() - self._calibration_start_time > 10:
+            self._calibration_timer.stop()
+            self._finish_calibration()
+            return
+
+        # Save current beta value for this moment
+        if self.focus_beta_values:
+            latest_beta = self.focus_beta_values[-1]
+            self.focus_calibration_data.append(latest_beta)
+
+    def _finish_calibration(self):
+        self.calibration_in_progress = False
+        if self.focus_calibration_data:
+            avg_focus = np.mean(self.focus_calibration_data)
+            new_threshold = avg_focus * C.FOCUS_RMS_CONSTANT * 0.95
+            self.eeg_status_label.setText("Status: Calibration Complete.")
+            self.calibration_status_label.setText(f"Calibration: Complete ({new_threshold:.3f})")
+
+            print(f"Calibrated focus level: {avg_focus:.3f}, Threshold set to: {new_threshold:.3f}")
+
+            self.focus_detector.set_manual_threshold(new_threshold, False)
+            self.focus_detector.reset_threshold()
+            self.manual_threshold_value = new_threshold
+            self.threshold_slider.setValue(int(new_threshold * 100))
+            self.threshold_value_label.setText(f"{new_threshold:.2f}")
+        else:
+            self.eeg_status_label.setText("Status: Calibration failed.")
+            self.calibration_status_label.setText("Calibration: Failed")
+
+
+
     def update_focus_plot(self, timestamp, beta_metric, threshold_value):
          if not self.focus_canvas: return
 
@@ -691,62 +835,6 @@ class EEGMonitorGUI(QWidget):
             print("GUI: Focus threshold reset signal sent to detector.")
         else:
              print("GUI: Cannot reset focus threshold - detector not available.")
-    # START CALIBRATION MODE
-    def start_calibration_mode(self):
-        if not self.focus_detector:
-            print("Calibration Error: Focus detector not initialized.")
-            return
-
-        self.eeg_status_label.setText("Status: Calibration - Please Relax...")
-        self.focus_calibration_data = []
-
-        # Phase 1: Relax
-        self._calibration_phase = "relax"
-        QTimer.singleShot(5000, self._start_focus_phase)
-
-    def _start_focus_phase(self):
-        self.eeg_status_label.setText("Status: Calibration - Now Focus Hard!")
-        self._calibration_phase = "focus"
-        self.focus_calibration_data = []
-        self._calibration_start_time = time()
-        self._calibration_timer = QTimer(self)
-        self._calibration_timer.timeout.connect(self._collect_focus_data)
-        self._calibration_timer.start(200)
-
-    def _collect_focus_data(self):
-        if not hasattr(self, 'focus_beta_values') or not self.focus_beta_values:
-            return
-
-        if time() - self._calibration_start_time > 10:
-            self._calibration_timer.stop()
-            self._finish_calibration()
-            return
-
-        # Save the most recent beta value
-        latest_beta = self.focus_beta_values[-1]
-        self.focus_calibration_data.append(latest_beta)
-
-    def _finish_calibration(self):
-        if self.focus_calibration_data:
-            avg_focus = np.mean(self.focus_calibration_data)
-            new_threshold = avg_focus * C.FOCUS_RMS_CONSTANT * 0.95
-            self.eeg_status_label.setText(f"Calibration Complete. Threshold: {new_threshold:.3f}")
-            print(f"Calibrated focus level: {avg_focus:.3f}, Threshold set to: {new_threshold:.3f}")
-
-            # Temporarily enable manual mode to inject value
-            self.focus_detector.set_manual_threshold(new_threshold, True)
-            self.focus_detector.reset_threshold()
-
-            # Optionally switch back to auto thresholding after calibration
-            QTimer.singleShot(2000, lambda: self.focus_detector.set_manual_threshold(new_threshold, False))
-
-            # Reflect in GUI
-            self.manual_threshold_value = new_threshold
-            self.threshold_slider.setValue(int(new_threshold * 100))
-            self.threshold_value_label.setText(f"{new_threshold:.2f}")
-        else:
-            self.eeg_status_label.setText("Calibration failed. No focus data captured.")
-    # END OF CALIBRATION CODE
 
     def update_detector_status(self, status):
         print(f"Detector Status: {status}")
@@ -893,28 +981,18 @@ class EEGMonitorGUI(QWidget):
 
 
     def update_movement(self, direction):
+        if self.calibration_in_progress:
+            print("Bluetooth blocked: Calibration in progress.")
+            return
+
         print(f"GUI: Blink received: {direction}")
         if not self._check_bluetooth_connection():
             print("GUI: Bluetooth not connected, ignoring blink.")
             return
 
-        if direction == "toggle_reverse":
-            self.reverse_mode = not self.reverse_mode
-            mode_text = "REVERSE" if self.reverse_mode else "FORWARD"
-            if(mode_text == "REVERSE"):
-                self.bluetooth_thread.send_command("REVERSE_LED_ON")
-            if(mode_text == "FORWARD"):
-                self.bluetooth_thread.send_command("REVERSE_LED_OFF")
-            self.direction_mode_label.setText(f"Direction: {mode_text}")
-            print(f"GUI: Reverse mode toggled -> Now {mode_text}")
-            # If moving, update move command to reflect direction
-            if self.is_moving_forward: # Check if supposed to be moving based on focus
-                move_cmd = "MOVE_REVERSE" if self.reverse_mode else "MOVE_FORWARD"
-                self.bluetooth_thread.send_command(move_cmd)
-                # Update display only if not currently turning (timer inactive)
-                if not self.direction_timer.isActive():
-                     self.movement_display.setText(f"Moving {mode_text}")
+        if direction not in ("left", "right"):
             return
+
 
         # Normal left/right blink control
         command = None
@@ -937,9 +1015,8 @@ class EEGMonitorGUI(QWidget):
         if self._check_bluetooth_connection():
             command = None
             if self.is_moving_forward:
-                 mode_text = "REVERSE" if self.reverse_mode else "FORWARD"
-                 self.movement_display.setText(f"Moving {mode_text}")
-                 command = "MOVE_REVERSE" if self.reverse_mode else "MOVE_FORWARD"
+                self.movement_display.setText("Moving FORWARD")
+                command = "MOVE_FORWARD"
             else:
                 self.movement_display.setText("Stop")
                 command = "STOP"
@@ -953,6 +1030,10 @@ class EEGMonitorGUI(QWidget):
 
 
     def update_focus(self, focused):
+        if self.calibration_in_progress:
+            print("Bluetooth blocked: Calibration in progress.")
+            return
+
         print(f"GUI: Focus state received: {focused}")
         focus_changed = self.is_moving_forward != focused
         self.is_moving_forward = focused
@@ -969,9 +1050,8 @@ class EEGMonitorGUI(QWidget):
         # The direction_timer.isActive() check prevents sending move/stop while turning display is active
         if focus_changed and not self.direction_timer.isActive():
             if focused:
-                mode = "REVERSE" if self.reverse_mode else "FORWARD"
-                self.movement_display.setText(f"Moving {mode}")
-                command = "MOVE_REVERSE" if self.reverse_mode else "MOVE_FORWARD"
+                self.movement_display.setText("Moving FORWARD")
+                command = "MOVE_FORWARD"
             else:
                 self.movement_display.setText("Stop")
                 command = "STOP"
@@ -982,8 +1062,7 @@ class EEGMonitorGUI(QWidget):
         elif not self.direction_timer.isActive():
              # If focus didn't change, but maybe timer expired, ensure display matches state
              if self.is_moving_forward:
-                  mode = "REVERSE" if self.reverse_mode else "FORWARD"
-                  self.movement_display.setText(f"Moving {mode}")
+                  self.movement_display.setText("Moving FORWARD")
              else:
                   self.movement_display.setText("Stop")
 
