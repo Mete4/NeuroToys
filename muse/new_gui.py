@@ -3,8 +3,8 @@ import asyncio
 import threading
 import numpy as np
 import os
-from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame, QSizePolicy 
-from PyQt6.QtCore import QThread, pyqtSignal, QTimer, QEventLoop
+from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame, QSizePolicy, QSlider, QCheckBox
+from PyQt6.QtCore import QThread, pyqtSignal, QTimer, QEventLoop, Qt
 from time import time
 
 import matplotlib
@@ -266,6 +266,8 @@ class EEGMonitorGUI(QWidget):
     _muse_scan_result_signal = pyqtSignal(object)
     # Signal from BatteryCheckThread
     _battery_level_signal = pyqtSignal(float)
+    # Signal to communicate manual threshold to focus detector
+    _manual_threshold_signal = pyqtSignal(float, bool)
 
     def __init__(self):
         super().__init__()
@@ -294,6 +296,10 @@ class EEGMonitorGUI(QWidget):
         self._muse_scan_result_signal.connect(self.on_muse_scan_complete)
         # Connect battery signal to its handler
         self._battery_level_signal.connect(self.on_battery_level_received)
+
+        # Manual threshold settings
+        self.manual_threshold_enabled = False
+        self.manual_threshold_value = 0.25
 
         # Plotting
         self.blink_canvas = None
@@ -379,7 +385,9 @@ class EEGMonitorGUI(QWidget):
         self.blink_canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         left_right_layout.addWidget(self.blink_canvas)
 
-
+        # Focus plot with threshold controls
+        focus_section_layout = QHBoxLayout()
+        
         # Focus plot
         self.focus_figure = Figure(figsize=(5, 4)) # side-by-side size
         self.focus_canvas = FigureCanvas(self.focus_figure)
@@ -393,8 +401,40 @@ class EEGMonitorGUI(QWidget):
         self.focus_ax.legend(loc='lower left')
         self.focus_figure.tight_layout()
         self.focus_canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        left_right_layout.addWidget(self.focus_canvas)
+        focus_section_layout.addWidget(self.focus_canvas)
+        
+        # Add vertical threshold controls
+        threshold_controls = QVBoxLayout()
+        
+        # Manual threshold checkbox at the top
+        self.manual_threshold_checkbox = QCheckBox("Manual\nThreshold")
+        self.manual_threshold_checkbox.setChecked(False)
+        self.manual_threshold_checkbox.toggled.connect(self.toggle_manual_threshold)
+        threshold_controls.addWidget(self.manual_threshold_checkbox)
+        
 
+        
+        # Threshold slider in the middle - with fixed height
+        self.threshold_slider = QSlider(Qt.Orientation.Vertical)
+        self.threshold_slider.setMinimum(-50)
+        self.threshold_slider.setMaximum(100)
+        self.threshold_slider.setValue(int(self.manual_threshold_value*100)) 
+        self.threshold_slider.setTickPosition(QSlider.TickPosition.TicksRight)
+        self.threshold_slider.setTickInterval(10)
+        self.threshold_slider.valueChanged.connect(self.update_manual_threshold)
+        self.threshold_slider.setEnabled(False)  # Disabled until manual mode checked
+        self.threshold_slider.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        threshold_controls.addWidget(self.threshold_slider)
+        
+        threshold_controls.addSpacing(50)
+        
+        # Threshold value label at the bottom
+        self.threshold_value_label = QLabel(f"{self.manual_threshold_value:.2f}")
+        self.threshold_value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        threshold_controls.addWidget(self.threshold_value_label)
+        
+        focus_section_layout.addLayout(threshold_controls)
+        left_right_layout.addLayout(focus_section_layout)
 
         # Add the horizontal layout to the main layout
         plots_layout.addLayout(left_right_layout)
@@ -411,6 +451,41 @@ class EEGMonitorGUI(QWidget):
         self.setWindowTitle("EEG Car Monitor")
         self.resize(1200, 800)
 
+    
+    def toggle_manual_threshold(self, checked):
+        """Toggle between automatic and manual threshold modes"""
+        # Store previous state to detect transitions
+        was_manual = self.manual_threshold_enabled
+        
+        # Update the current state
+        self.manual_threshold_enabled = checked
+        self.threshold_slider.setEnabled(checked)
+        
+        # If we have a focus detector running, update its threshold mode
+        if self.focus_detector and hasattr(self.focus_detector, 'set_manual_threshold'):
+            self.focus_detector.set_manual_threshold(
+                self.manual_threshold_value, self.manual_threshold_enabled)
+            
+            # If switching from manual to automatic, reset the threshold history
+            if was_manual and not checked:
+                print("GUI: Switching from manual to auto mode - resetting threshold history")
+                self.focus_detector.reset_threshold()
+            
+        print(f"Manual threshold mode {'enabled' if checked else 'disabled'}, " 
+              f"value: {self.manual_threshold_value:.2f}")
+
+    def update_manual_threshold(self, value):
+        """Update the manual threshold value based on slider position"""
+        # Convert slider value (-50,-100) to threshold (-0.5,-1.0)
+        self.manual_threshold_value = (value) / 100.0
+        self.threshold_value_label.setText(f"{self.manual_threshold_value:.2f}")
+        
+        # Update the focus detector if it exists and is in manual mode
+        if self.focus_detector and self.manual_threshold_enabled and hasattr(self.focus_detector, 'set_manual_threshold'):
+            self.focus_detector.set_manual_threshold(
+                self.manual_threshold_value, self.manual_threshold_enabled)
+            
+        print(f"Manual threshold updated to {self.manual_threshold_value:.2f}")
 
     def _perform_scan_and_emit(self):
         """Target function for the scan thread. Sets up loop, runs scan, emits result via signal."""
@@ -609,8 +684,13 @@ class EEGMonitorGUI(QWidget):
         self.focus_thread.finished.connect(self.on_detector_thread_finished)
         # Enable reset button when focus detector starts
         self.focus_thread.finished.connect(lambda: self.reset_focus_button.setEnabled(False))
+        
+        # Set manual threshold if enabled before starting detector
+        if self.manual_threshold_enabled and hasattr(self.focus_detector, 'set_manual_threshold'):
+            self.focus_detector.set_manual_threshold(
+                self.manual_threshold_value, self.manual_threshold_enabled)
+            
         self.focus_thread.start()
-
 
     # Plot Update
     def update_blink_plot(self, timestamps, channel_data_dict, new_blink_markers):
