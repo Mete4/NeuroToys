@@ -1,0 +1,11 @@
+bleak==0.22.3
+matplotlib==3.10.1
+muselsl==2.3.1
+numpy==2.2.4
+pylsl==1.17.6
+PyQt6==6.9.0
+PyQt6_sip==13.10.0
+qasync==0.27.1
+scikit_learn==1.6.1
+scipy==1.15.2
+seaborn==0.13.2

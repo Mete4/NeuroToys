@@ -136,6 +136,26 @@ class BluetoothController:
         """Set a custom callback function to handle notifications."""
         self.notification_callback = callback
 
+    async def is_connected(self):
+        """Check if the connection is active by attempting a simple operation."""
+        if not self.client or not self.connected:
+            print("is_connected: Not connected according to flags")
+            return False
+        
+        try:
+            # Try to read a characteristic to verify connection
+            services = self.client.services
+            if not services:
+                print("is_connected: Client has no services")
+                return False
+            print("is_connected: Connection verified via services access")
+            return True
+        except Exception as e:
+            print(f"is_connected: Error verifying connection: {e}")
+            # Update the connected flag since we detected a disconnection
+            self.connected = False
+            return False
+
 
 async def main():
     """Example usage of the BluetoothController class."""

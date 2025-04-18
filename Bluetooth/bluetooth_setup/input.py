@@ -1,10 +1,12 @@
-from bluetooth import scan_for_device, connect_to_device, send_message, handle_notification, CHARACTERISTIC_UUID
+from bluetooth import BluetoothController
 
 import asyncio
 
 async def main():
+    controller = BluetoothController()
+    
     # Scan for the ESP32 device
-    device = await scan_for_device()
+    device = await controller.scan_for_device()
     if not device:
         print("Device not found!")
         return
@@ -12,23 +14,23 @@ async def main():
     print(f"Found device: {device.name} ({device.address})")
 
     # Connect to the device
-    client = await connect_to_device(device)
-    if client:
-        await send_user_input(client)
+    connected = await controller.connect()
+    if connected:
+        await send_user_input(controller)
 
-async def send_user_input(client):
+async def send_user_input(controller):
     # Start handling notifications
-    await client.start_notify(CHARACTERISTIC_UUID, handle_notification)
+    await controller.subscribe_to_notifications()
     try:
         while True:
             message = input("Enter message to send (or 'exit' to quit): ")
             if message.lower() == 'exit':
                 break
-            await send_message(client, message.encode())
+            await controller.send_command(message)
     except KeyboardInterrupt:
         pass
     finally:
-        await client.disconnect()
+        await controller.disconnect()
         print("Disconnected from device.")
 
 if __name__ == "__main__":
