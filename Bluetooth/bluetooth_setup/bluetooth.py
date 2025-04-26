@@ -14,12 +14,32 @@ class BluetoothController:
         self.notification_callback = None
     
     async def scan_for_device(self, device_name="ESP_CAR"):
-        """Scan and find the specified BLE device."""
+        """Scan and find the specified BLE device.
+        
+        If the device_name ends with '*', it will match any device starting with the name.
+        """
         print(f"Scanning for {device_name}...")
-        device = await BleakScanner.find_device_by_filter(
-            lambda d, ad: (d.name or ad.local_name or "").lower() == device_name.lower()
-        )
-        return device
+        
+        # Check if we're matching by prefix (starts with)
+        if device_name.endswith('*'):
+            prefix = device_name[:-1]  # Remove the * at the end
+            print(f"Scanning for devices starting with '{prefix}'")
+            
+            # Find all devices and filter manually for the prefix
+            all_devices = await BleakScanner.discover(timeout=5.0)
+            matching_devices = [d for d in all_devices 
+                               if (d.name and d.name.startswith(prefix))]
+            
+            if matching_devices:
+                print(f"Found {len(matching_devices)} devices matching '{prefix}'")
+                return matching_devices
+            return None
+        else:
+            # Exact name match (original behavior)
+            device = await BleakScanner.find_device_by_filter(
+                lambda d, ad: (d.name or ad.local_name or "").lower() == device_name.lower()
+            )
+            return device
     
     async def scan_all_devices(self, timeout=5.0):
         """Scan for all BLE devices and print their information."""
@@ -60,7 +80,25 @@ class BluetoothController:
         except Exception as e:
             print(f"Connection error: {str(e)}")
             return False
-    
+        
+    async def connect_to_device(self, device):
+        """Connect to a specific Bluetooth device."""
+        if not device:
+            print("No device provided for connection.")
+            return False
+
+        print(f"Connecting to device: {device.name} ({device.address})")
+
+        try:
+            self.client = BleakClient(device)
+            await self.client.connect()
+            self.connected = True
+            print("Successfully connected to the device.")
+            return True
+        except Exception as e:
+            print(f"Connection error: {str(e)}")
+            return False
+        
     async def list_services(self):
         """List all services and characteristics of the connected device."""
         if not self.connected or not self.client:
