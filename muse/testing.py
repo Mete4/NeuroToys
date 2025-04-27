@@ -3,7 +3,7 @@ import asyncio
 import threading
 import numpy as np
 import os
-from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame, QSizePolicy, QSlider, QCheckBox, QComboBox
+from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame, QSizePolicy, QSlider, QCheckBox
 from PyQt6.QtCore import QThread, pyqtSignal, QTimer, QEventLoop, Qt
 from time import time
 
@@ -23,7 +23,6 @@ try:
     from bluetooth import BluetoothController
 except ImportError:
     print("ERROR: Could not import BluetoothController.")
-    sys.exit(1)
 
 try:
     from muselsl import stream, list_muses
@@ -31,13 +30,12 @@ try:
     from bleak.exc import BleakError
 except ImportError:
     print("Warning: muselsl/BleakError not found.")
-    sys.exit(1)
+    stream, list_muses, Muse, BleakError = None, None, None, Exception
 
 
 class BluetoothThread(QThread):
     bluetooth_status_signal = pyqtSignal(str)
     connection_lost_signal = pyqtSignal()
-    devices_found_signal = pyqtSignal(list)
 
     def __init__(self):
         super().__init__()
@@ -45,10 +43,8 @@ class BluetoothThread(QThread):
         self.connection_check_timer = QTimer()
         self.loop = None
         self.was_connected = False
-        self.device_to_connect = None  # Store the device to connect to
 
     def run(self):
-        """Main thread function to handle Bluetooth connection and status checks."""
         try:
             self.loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self.loop)
@@ -73,7 +69,6 @@ class BluetoothThread(QThread):
                     self.loop.close()
 
     def check_connection_status(self):
-        """Check the connection status of the Bluetooth device."""
         if not self.controller.connected and self.was_connected:
              print("BT Check: Connection lost detected by periodic check.")
              self.was_connected = False
@@ -83,39 +78,24 @@ class BluetoothThread(QThread):
                  self.connection_check_timer.stop()
 
     async def connect_bluetooth(self):
-        """Connect to the Bluetooth device."""
         print("BluetoothThread: Attempting connection...")
         try:
-            if self.device_to_connect:
-                # Connect to specific device object
-                connected = await self.controller.connect_to_device(self.device_to_connect)
-                
-                print(f"BluetoothThread: controller.connect returned: {connected}")
-                if connected:
-                    self.was_connected = True
-                    self.bluetooth_status_signal.emit("Bluetooth Connected!")
-                    if not self.connection_check_timer.isActive():
-                        self.connection_check_timer.start(2000)
-                else:
-                    self.was_connected = False
-                    self.bluetooth_status_signal.emit("Bluetooth Failed to Connect")
+            connected = await self.controller.connect("ESP_CAR")
+            print(f"BluetoothThread: controller.connect returned: {connected}")
+            if connected:
+                self.was_connected = True
+                self.bluetooth_status_signal.emit("Bluetooth Connected!")
+                if not self.connection_check_timer.isActive():
+                    self.connection_check_timer.start(2000)
             else:
-                # Scan for all ESP_CAR* devices and just emit the list without connecting
-                devices = await self.controller.scan_for_device("ESP_CAR*")
-                if isinstance(devices, list):
-                    # Devices found (one or more), emit signal and return
-                    self.devices_found_signal.emit(devices)
-                    return
-                else:
-                    # No devices found
-                    self.bluetooth_status_signal.emit("No Bluetooth devices found")
+                self.was_connected = False
+                self.bluetooth_status_signal.emit("Bluetooth Failed to Connect")
         except Exception as e:
             print(f"BluetoothThread: Exception during connection: {e}")
             self.was_connected = False
             self.bluetooth_status_signal.emit(f"Bluetooth Connection Error: {e}")
 
     def send_command(self, command):
-        """Send a command to the Bluetooth device."""
         if not self.controller.connected or not self.was_connected:
             print(f"BT Send: Not connected. Cannot send: {command}")
             if self.was_connected:
@@ -153,7 +133,6 @@ class BluetoothThread(QThread):
         asyncio.run_coroutine_threadsafe(_send(), self.loop)
 
     def stop_thread(self):
-        """Stop the Bluetooth thread and clean up resources."""
         print("BluetoothThread: Stopping...")
         if self.connection_check_timer.isActive():
             self.connection_check_timer.stop()
@@ -197,16 +176,16 @@ class BatteryCheckThread(QThread):
                 self._received_telemetry = True
 
     def run(self):
-        """Main thread function to connect to Muse and get battery level."""
         if not Muse:
             print("Battery Check Thread: muselsl.muse.Muse class not available.")
             self.battery_level_signal.emit(-1.0)
             return
 
-        # Set up asyncio event loop for this thread
+        # --- Set up asyncio event loop for this thread ---
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        
+        # --- End asyncio setup ---
+
         muse_instance = None
         connected = False
         try:
@@ -216,17 +195,18 @@ class BatteryCheckThread(QThread):
                                  callback_telemetry=self._handle_telemetry_for_battery,
                                  # Disable other callbacks for efficiency
                                  callback_eeg=None, callback_acc=None, callback_gyro=None, callback_ppg=None,
-                                 backend='bleak') 
+                                 # Ensure backend selection doesn't override bleak if it's the default
+                                 backend='bleak') # Explicitly use bleak if needed, or 'auto'
 
             connected = muse_instance.connect(retries=0) # Attempt connection once
 
             if connected:
                 print("Battery Check Thread: Connected. Starting telemetry...")
-                muse_instance.start() # Start telemetry
+                muse_instance.start() # Sends 'd' command, hopefully triggering telemetry
 
-                # Wait for the callback to set the flag
+                # Wait for the callback to set the flag, with a timeout
                 start_wait = time()
-                timeout_seconds = 10 
+                timeout_seconds = 10 # Slightly longer timeout
                 while True:
                     with self._lock:
                         if self._received_telemetry:
@@ -235,14 +215,14 @@ class BatteryCheckThread(QThread):
                         print("Battery Check Thread: Timeout waiting for telemetry packet.")
                         self._battery_level = -1.0 # Ensure error state on timeout
                         break # Exit loop on timeout
-                    self.msleep(200)
+                    self.msleep(200) # Short sleep within the thread
 
                 if self._received_telemetry:
                     print(f"Battery Check Thread: Successfully received battery level: {self._battery_level:.1f}%")
 
                 print("Battery Check Thread: Stopping stream...")
                 muse_instance.stop()
-                self.msleep(100) 
+                self.msleep(100) # Brief pause after stop
 
             else:
                 print("Battery Check Thread: Failed to connect for battery check.")
@@ -252,10 +232,10 @@ class BatteryCheckThread(QThread):
             print(f"Battery Check Thread: Error during battery check: {e}")
             import traceback
             traceback.print_exc()
-            self._battery_level = -1.0
+            self._battery_level = -1.0 # Set error state
 
         finally:
-            
+            # --- Cleanly disconnect ---
             if connected and muse_instance:
                  print("Battery Check Thread: Disconnecting...")
                  try:
@@ -264,28 +244,30 @@ class BatteryCheckThread(QThread):
                  except Exception as e_disconnect:
                       print(f"Battery Check Thread: Error during disconnect: {e_disconnect}")
             elif muse_instance:
-                # Attempt disconnect with adapter cleanup 
+                # Attempt disconnect even if connect failed partially, Muse might hold adapter resources
                 try:
-                    muse_instance.disconnect() 
+                    muse_instance.disconnect() # Muse.disconnect should handle adapter cleanup
                     print("Battery Check Thread: Disconnected (after failed connect).")
                 except Exception as e_disconnect_fail:
                     print(f"Battery Check Thread: Error during cleanup disconnect (after fail): {e_disconnect_fail}")
 
 
-            # Close the asyncio loop for this thread 
+            # --- Close the asyncio loop for this thread ---
             if loop and not loop.is_closed():
                 loop.close()
                 print("Battery Check Thread: Closed asyncio loop.")
-            
+            # --- End asyncio cleanup ---
 
             print(f"Battery Check Thread: Emitting battery level: {self._battery_level}")
             self.battery_level_signal.emit(self._battery_level)
             print("Battery Check Thread: Finished.")
 
 class EEGMonitorGUI(QWidget):
-    _muse_scan_result_signal = pyqtSignal(object) 
-    _battery_level_signal = pyqtSignal(float) # Signal from BatteryCheckThread
-    _manual_threshold_signal = pyqtSignal(float, bool) # Signal to communicate manual threshold to focus detector
+    _muse_scan_result_signal = pyqtSignal(object)
+    # Signal from BatteryCheckThread
+    _battery_level_signal = pyqtSignal(float)
+    # Signal to communicate manual threshold to focus detector
+    _manual_threshold_signal = pyqtSignal(float, bool)
 
     def __init__(self):
         super().__init__()
@@ -336,10 +318,6 @@ class EEGMonitorGUI(QWidget):
         self.focus_beta_values = deque(maxlen=500)
         self.focus_threshold_values = deque(maxlen=500)
 
-        # Device selection
-        self.muse_devices = []
-        self.bt_devices = []
-
         self.initUI()
 
     def initUI(self):
@@ -349,8 +327,9 @@ class EEGMonitorGUI(QWidget):
         status_layout = QHBoxLayout() # Layout for EEG and Battery status
         self.eeg_status_label = QLabel("Status: Ready")
         status_layout.addWidget(self.eeg_status_label)
+        # --- Add Battery Status Label ---
         self.battery_status_label = QLabel("Battery: Unknown")
-        self.battery_status_label.setStyleSheet("margin-left: 20px;") 
+        self.battery_status_label.setStyleSheet("margin-left: 20px;") # Add some spacing
         status_layout.addWidget(self.battery_status_label)
 
         self.calibration_status_label = QLabel("Calibration: Idle")
@@ -369,50 +348,10 @@ class EEGMonitorGUI(QWidget):
         layout.addWidget(self.movement_display)
 
 
-        # Device selection dropdowns
-        device_selection_layout = QHBoxLayout()
-        
-        # Muse selection
-        self.muse_selection_layout = QHBoxLayout()
-        self.muse_selection_layout.addWidget(QLabel("Select Muse:"))
-        self.muse_dropdown = QComboBox()
-        self.muse_dropdown.setMinimumWidth(200)
-        self.muse_dropdown.currentIndexChanged.connect(self.on_muse_selected)
-        self.muse_selection_layout.addWidget(self.muse_dropdown)
-        
-        # Add Muse connect button
-        self.muse_connect_button = QPushButton("Connect to Muse")
-        self.muse_connect_button.clicked.connect(self.connect_selected_muse)
-        self.muse_connect_button.setEnabled(False)
-        self.muse_selection_layout.addWidget(self.muse_connect_button)
-        
-        device_selection_layout.addLayout(self.muse_selection_layout)
-        
-        # BT Car selection
-        self.bt_selection_layout = QHBoxLayout()
-        self.bt_selection_layout.addWidget(QLabel("Select Car:"))
-        self.bt_dropdown = QComboBox()
-        self.bt_dropdown.setMinimumWidth(200)
-        self.bt_dropdown.currentIndexChanged.connect(self.on_bt_car_selected)
-        self.bt_selection_layout.addWidget(self.bt_dropdown)
-        
-        # Add BT connect button
-        self.bt_connect_button = QPushButton("Connect to Car")
-        self.bt_connect_button.clicked.connect(self.connect_selected_bt)
-        self.bt_connect_button.setEnabled(False)
-        self.bt_selection_layout.addWidget(self.bt_connect_button)
-        
-        device_selection_layout.addLayout(self.bt_selection_layout)
-        
-        # Add device selection to main layout
-        layout.addLayout(device_selection_layout)
-        
-
-
         # Buttons
         self.scan_stream_button = QPushButton("Scan and Start Muse Stream")
         self.scan_stream_button.clicked.connect(self.scan_and_start_muse)
-        self.scan_stream_button.setEnabled(list_muses is not None and Muse is not None)
+        self.scan_stream_button.setEnabled(list_muses is not None and Muse is not None) # Also check Muse class
         if list_muses is None or Muse is None: self.scan_stream_button.setToolTip("muselsl library or Muse class not found")
         layout.addWidget(self.scan_stream_button)
 
@@ -420,14 +359,13 @@ class EEGMonitorGUI(QWidget):
         self.connect_eeg_button.clicked.connect(self.start_eeg_detectors)
         layout.addWidget(self.connect_eeg_button)
 
-        
         self.connect_bluetooth_button = QPushButton("Connect to Bluetooth Car")
         self.connect_bluetooth_button.setEnabled(False)
         self.connect_bluetooth_button.clicked.connect(self.connect_bluetooth)
         layout.addWidget(self.connect_bluetooth_button)
 
         plots_layout = QVBoxLayout()
-        left_right_layout = QHBoxLayout() 
+        left_right_layout = QHBoxLayout() #sss
 
         # Blink Plot
         self.blink_figure = Figure(figsize=(5, 4)) # side-by-side size
@@ -479,7 +417,7 @@ class EEGMonitorGUI(QWidget):
         
 
         
-        # Threshold slider 
+        # Threshold slider in the middle - with fixed height
         self.threshold_slider = QSlider(Qt.Orientation.Vertical)
         self.threshold_slider.setMinimum(-50)
         self.threshold_slider.setMaximum(100)
@@ -520,6 +458,7 @@ class EEGMonitorGUI(QWidget):
         self.setLayout(layout)
         self.setWindowTitle("EEG Car Monitor")
         self.resize(1200, 800)
+
     
     def toggle_manual_threshold(self, checked):
         """Toggle between automatic and manual threshold modes"""
@@ -585,89 +524,7 @@ class EEGMonitorGUI(QWidget):
         loop.close()
         print("Scan Thread: Exiting.")
 
-    def set_muse_dropdown_visible(self, visible):
-        """Show or hide the Muse selection dropdown"""
-        for i in range(self.muse_selection_layout.count()):
-            widget = self.muse_selection_layout.itemAt(i).widget()
-            if widget:
-                widget.setVisible(visible)
-    
-    def set_bt_dropdown_visible(self, visible):
-        """Show or hide the Bluetooth car selection dropdown"""
-        for i in range(self.bt_selection_layout.count()):
-            widget = self.bt_selection_layout.itemAt(i).widget()
-            if widget:
-                widget.setVisible(visible)
-    
-    def on_muse_selected(self, index):
-        """Handle Muse device selection from dropdown"""
-        if index >= 0 and index < len(self.muse_devices):
-            print(f"Muse device selected: {self.muse_devices[index].get('name')}")
-            
-            # Store the selected Muse
-            self.current_muse_address = self.muse_devices[index].get('address')
-            self.current_muse_name = self.muse_devices[index].get('name')
-            
-            # Enable connect button
-            self.muse_connect_button.setEnabled(True)
-    
-    def connect_selected_muse(self):
-        """Connect to the Muse selected in the dropdown"""
-        if not self.current_muse_address:
-            print("No Muse device selected")
-            return
-            
-        # Disable connect button and dropdown while connecting
-        self.muse_connect_button.setEnabled(False)
-        self.muse_dropdown.setEnabled(False) 
-        self.muse_connect_button.setText("Connecting...")
-        
-        # Start battery check for the selected device
-        self.start_battery_check()
-    
-    def on_bt_car_selected(self, index):
-        """Handle Bluetooth car selection from dropdown"""
-        if index >= 0 and index < len(self.bt_devices):
-            print(f"Bluetooth car selected: {self.bt_devices[index].name}")
-            
-            # Store the selected device for later connection
-            self.selected_bt_device = self.bt_devices[index]
-            
-            # Enable connect button
-            self.bt_connect_button.setEnabled(True)
 
-    def connect_selected_bt(self):
-        """Connect to the Bluetooth car selected in the dropdown"""
-        if not hasattr(self, 'selected_bt_device') or not self.selected_bt_device:
-            print("No Bluetooth device selected")
-            return
-            
-        # Disable connect button while connecting
-        self.bt_connect_button.setEnabled(False)
-        self.bt_dropdown.setEnabled(False)
-        self.bt_connect_button.setText("Connecting...")
-        self.bluetooth_status_label.setText("Bluetooth Status: Connecting to selected device...")
-        
-        # Start connection process
-        if self.bluetooth_thread and self.bluetooth_thread.isRunning():
-            self.bluetooth_thread.device_to_connect = self.selected_bt_device
-            future = asyncio.run_coroutine_threadsafe(
-                self.bluetooth_thread.connect_bluetooth(), 
-                self.bluetooth_thread.loop
-            )
-        else:
-            try:
-                print("Scan Thread: Starting list_muses scan...")
-                muses = list_muses()
-                print(f"Scan Thread: Scan finished. Found: {muses}")
-            except BleakError as be:
-                error_msg = f"Bluetooth scan error (Bleak): {be}. Ensure Bluetooth is enabled."
-                print(f"Scan Thread: {error_msg}")
-            except Exception as e:
-                error_msg = f"Unexpected error during scan: {e}"
-                print(f"Scan Thread: {error_msg}")
-                import traceback
-                traceback.print_exc()
 
     def scan_and_start_muse(self):
         """ Starts the Muse scan in a standard Python thread. """
@@ -680,7 +537,7 @@ class EEGMonitorGUI(QWidget):
         if self.battery_thread and self.battery_thread.isRunning():
             print("Battery check already in progress.")
             return
-            
+
         self.scan_stream_button.setEnabled(False)
         self.scan_stream_button.setText("Scanning...")
         self.eeg_status_label.setText("Status: Scanning for Muse...")
@@ -691,46 +548,45 @@ class EEGMonitorGUI(QWidget):
         self.scan_thread = threading.Thread(target=self._perform_scan_and_emit, daemon=True)
         self.scan_thread.start()
 
+
+    # Connected to _muse_scan_result_signal and runs on the GUI thread
     def on_muse_scan_complete(self, muses):
-        """ Handles the result of the Muse scan received via signal 
-            Connected to _muse_scan_result_signal and runs on the GUI thread
-        """
+        """ Handles the result of the Muse scan received via signal """
         print(f"GUI Thread: Scan complete signal received. Muses: {muses}")
         # Button text will be updated after battery check or if scan fails
 
         if muses:
-            if len(muses) > 0:
-                # Multiple Muses found, populate dropdown
-                self.muse_devices = muses
-                self.muse_dropdown.clear()
-                for muse in muses:
-                    self.muse_dropdown.addItem(f"{muse.get('name', 'Unknown')} - {muse.get('address')}")
-                self.set_muse_dropdown_visible(True)
-                self.eeg_status_label.setText(f"Status: Found {len(muses)} Muse devices. Please select one.")
-                self.scan_stream_button.setText("Scan and Start Muse Stream")
-                self.scan_stream_button.setEnabled(True)
-                return
-            else:
-                # Single Muse found
-                self.set_muse_dropdown_visible(True)
-                selected_muse = muses[0]
-                muse_address = selected_muse.get('address')
-                muse_name = selected_muse.get('name', 'Unknown Muse')
-                if not muse_address:
-                    print("Error: Found Muse but address is missing.")
-                    self.eeg_status_label.setText("Status: Found Muse, but address missing.")
-                    self.scan_stream_button.setText("Scan and Start Muse Stream")
-                    self.scan_stream_button.setEnabled(True)
-                    return
+            selected_muse = muses[0]
+            muse_address = selected_muse.get('address')
+            muse_name = selected_muse.get('name', 'Unknown Muse')
+            if not muse_address:
+                 print("Error: Found Muse but address is missing.")
+                 self.eeg_status_label.setText("Status: Found Muse, but address missing.")
+                 self.scan_stream_button.setText("Scan and Start Muse Stream")
+                 self.scan_stream_button.setEnabled(True)
+                 return
 
-                # Store address and name for later use by battery check handler
-                self.current_muse_address = muse_address
-                self.current_muse_name = muse_name
+            # Store address and name for later use by battery check handler
+            self.current_muse_address = muse_address
+            self.current_muse_name = muse_name
 
-                # Start battery check
-                self.start_battery_check()
+            # --- Start Battery Check ---
+            self.eeg_status_label.setText(f"Status: Found {muse_name}. Checking battery...")
+            print(f"Attempting battery check for {muse_name} ({muse_address})")
+            self.battery_status_label.setText("Battery: Checking...")
+
+            if self.battery_thread and self.battery_thread.isRunning():
+                print("Warning: Battery thread already running? Stopping previous.")
+                self.battery_thread.quit() # Request quit
+                self.battery_thread.wait(1000)
+
+            self.battery_thread = BatteryCheckThread(muse_address, muse_name)
+            # Connect the thread's signal to the GUI's slot
+            self.battery_thread.battery_level_signal.connect(self._battery_level_signal)
+            self.battery_thread.start()
+            # --- Do NOT start LSL stream here yet ---
+
         else: # Scan failed
-            self.set_muse_dropdown_visible(False)
             error_text = "Muse scan failed: Check if Muse is ON or connected elsewhere."
             self.eeg_status_label.setText(f"Status: {error_text}")
             self.battery_status_label.setText("Battery: N/A")
@@ -738,23 +594,8 @@ class EEGMonitorGUI(QWidget):
             self.scan_stream_button.setEnabled(True)
 
         self.scan_thread = None # Clear scan thread reference
-    
-    def start_battery_check(self):
-        """Start battery check for the selected Muse device"""
-        self.eeg_status_label.setText(f"Status: Found {self.current_muse_name}. Checking battery...")
-        print(f"Attempting battery check for {self.current_muse_name} ({self.current_muse_address})")
-        self.battery_status_label.setText("Battery: Checking...")
 
-        if self.battery_thread and self.battery_thread.isRunning():
-            print("Warning: Battery thread already running? Stopping previous.")
-            self.battery_thread.quit() # Request quit
-            self.battery_thread.wait(1000)
-
-        self.battery_thread = BatteryCheckThread(self.current_muse_address, self.current_muse_name)
-        # Connect the thread's signal to the GUI's slot
-        self.battery_thread.battery_level_signal.connect(self._battery_level_signal)
-        self.battery_thread.start()
-        
+    # --- New Slot to Handle Battery Level Result ---
     def on_battery_level_received(self, battery_level):
         """Handles the battery level received from the BatteryCheckThread."""
         print(f"GUI Thread: Battery level signal received: {battery_level}")
@@ -767,28 +608,29 @@ class EEGMonitorGUI(QWidget):
         # Clean up battery thread reference
         self.battery_thread = None
 
-        # Start LSL Stream
+        # --- Now Proceed to Start LSL Stream ---
         if self.current_muse_address:
             self.eeg_status_label.setText(f"Status: Starting LSL stream for {self.current_muse_name}...")
             print(f"Attempting to start LSL stream for {self.current_muse_name} ({self.current_muse_address})")
             if stream:
-                # Ensure previous streaming thread is cleaned up if necessary
-                if self.streaming_thread and self.streaming_thread.is_alive():
-                    print("Warning: LSL Streaming thread was still alive? May cause issues.")
+                 # Ensure previous streaming thread is cleaned up if necessary
+                 if self.streaming_thread and self.streaming_thread.is_alive():
+                     print("Warning: LSL Streaming thread was still alive? May cause issues.")
+                     # Attempt to join? Or just overwrite? Overwriting is simpler for now.
 
-                self.streaming_thread = threading.Thread(
-                    target=run_stream_in_thread, args=(self.current_muse_address,), daemon=True)
-                self.streaming_thread.start()
-                QTimer.singleShot(1000, self.check_stream_started) # Check if it actually started
-                self.scan_stream_button.setText("Muse Streaming...") 
-                self.scan_stream_button.setEnabled(False)
+                 self.streaming_thread = threading.Thread(
+                     target=run_stream_in_thread, args=(self.current_muse_address,), daemon=True)
+                 self.streaming_thread.start()
+                 QTimer.singleShot(1000, self.check_stream_started) # Check if it actually started
+                 self.scan_stream_button.setText("Muse Streaming...") # Keep button disabled
+                 self.scan_stream_button.setEnabled(False)
             else:
-                self.eeg_status_label.setText("Status: Muse Found, Battery Checked, but 'stream' function missing.")
-                self.scan_stream_button.setText("Scan and Start Muse Stream")
-                self.scan_stream_button.setEnabled(True)
-                # Reset stored address if stream can not start
-                self.current_muse_address = None
-                self.current_muse_name = None
+                 self.eeg_status_label.setText("Status: Muse Found, Battery Checked, but 'stream' function missing.")
+                 self.scan_stream_button.setText("Scan and Start Muse Stream")
+                 self.scan_stream_button.setEnabled(True)
+                 # Reset stored address if stream can't start
+                 self.current_muse_address = None
+                 self.current_muse_name = None
 
         else:
             # This case should ideally not happen if scan succeeded, but handle it
@@ -797,8 +639,8 @@ class EEGMonitorGUI(QWidget):
             self.scan_stream_button.setText("Scan and Start Muse Stream")
             self.scan_stream_button.setEnabled(True)
 
+
     def check_stream_started(self):
-        """Check if the Muse streaming thread is alive and update the status label."""
         if self.streaming_thread and not self.streaming_thread.is_alive():
              print("Error: Muse streaming thread exited unexpectedly after start attempt.")
              self.eeg_status_label.setText("Status: Failed to start Muse LSL stream.")
@@ -810,16 +652,16 @@ class EEGMonitorGUI(QWidget):
         elif self.streaming_thread and self.streaming_thread.is_alive():
              print("Muse streaming thread appears active.")
              self.eeg_status_label.setText("Status: Muse LSL Stream Active.")
-             self.muse_connect_button.setText("Connected to Muse")
+             # Button remains disabled and text "Muse Streaming..."
+
 
     def start_eeg_detectors(self):
-        """Start the EEG detectors for blink and focus detection."""
         if self.blink_thread or self.focus_thread:
             print("GUI: Detectors already running or starting.")
             return
         self.connect_eeg_button.setEnabled(False)
         self.connect_eeg_button.setText("Connecting LSL...")
-        self.eeg_status_label.setText("Status: Initializing Detectors...") 
+        self.eeg_status_label.setText("Status: Initializing Detectors...") # Keep existing status logic mostly
         self.blink_detector_connected = False
         self.focus_detector_connected = False
         self.update_bluetooth_button_state()
@@ -860,10 +702,9 @@ class EEGMonitorGUI(QWidget):
         self.calibrate_button.setEnabled(True)
         QTimer.singleShot(1500, self.start_calibration_mode)  # Automatically start calibration after short delay
 
-    # Plot Updates
+    # Plot Update
     def update_blink_plot(self, timestamps, channel_data_dict, new_blink_markers):
-        """Update the blink plot with new data."""
-        if not self.blink_canvas or not hasattr(timestamps, 'any') or not timestamps.any(): return 
+        if not self.blink_canvas or not hasattr(timestamps, 'any') or not timestamps.any(): return # Added canvas check and better timestamp check
 
         # Add newly received markers to the persistent list
         self.gui_blink_markers_list.extend(new_blink_markers)
@@ -871,6 +712,7 @@ class EEGMonitorGUI(QWidget):
         # Filter the persistent list based on the current timestamp window
         min_plot_time = timestamps[0]
         max_plot_time = timestamps[-1]
+        # Keep markers within the received timestamp range
         self.gui_blink_markers_list = [m for m in self.gui_blink_markers_list
                                      if min_plot_time <= m[0] <= max_plot_time]
 
@@ -880,17 +722,17 @@ class EEGMonitorGUI(QWidget):
         # Update EEG lines
         for name, line in self.blink_lines.items():
             if name in channel_data_dict:
-                subsample = C.SUBSAMPLE 
+                subsample = C.SUBSAMPLE # Adjust subsampling factor
                 line.set_data(relative_times[::subsample], channel_data_dict[name][::subsample])
 
-        # Update blink markers using the filtered persistent list 
+        # Update blink markers using the filtered persistent list - vertical lines version
         if self.gui_blink_markers_list:
             # Extract marker times and convert to relative times
             marker_times = np.array([m[0] for m in self.gui_blink_markers_list])
             relative_marker_times = marker_times - timestamps[-1]
 
-            # Get corresponding y values for vertical lines use current ylim
-            ymin, ymax = self.blink_ax.get_ylim()
+            # Get corresponding y values for vertical lines (from bottom to top of plot)
+            ymin, ymax = self.blink_ax.get_ylim() # Use current ylim
 
             # Update vertical lines
             segments = [np.array([[x, ymin], [x, ymax]]) for x in relative_marker_times if -C.BLINK_WINDOW_SECONDS <= x <= 0]
@@ -904,9 +746,7 @@ class EEGMonitorGUI(QWidget):
         self.blink_ax.set_xlim(-C.BLINK_WINDOW_SECONDS, 0)
         self.blink_canvas.draw_idle()
 
-
     def start_calibration_mode(self):
-        """Start the calibration mode for the focus detector."""
         if not self.focus_detector:
             print("Calibration Error: Focus detector not initialized.")
             return
@@ -919,8 +759,8 @@ class EEGMonitorGUI(QWidget):
         self._calibration_phase = "relax"
         QTimer.singleShot(5000, self._start_focus_phase)
 
+
     def _start_focus_phase(self):
-        """Start the focus phase of calibration after a 5-second relaxation period."""
         self.calibration_status_label.setText("Calibration: Focusing...")
         self.eeg_status_label.setText("Status: Calibration in progress...")
         self._calibration_phase = "focus"
@@ -930,8 +770,8 @@ class EEGMonitorGUI(QWidget):
         self._calibration_timer.timeout.connect(self._collect_focus_data)
         self._calibration_timer.start(200)
 
+
     def _collect_focus_data(self):
-        """Collect focus data during calibration."""
         if not hasattr(self, 'focus_beta_values') or not self.focus_beta_values:
             return
 
@@ -946,7 +786,6 @@ class EEGMonitorGUI(QWidget):
             self.focus_calibration_data.append(latest_beta)
 
     def _finish_calibration(self):
-        """Finish the calibration process and update the threshold."""
         self.calibration_in_progress = False
         if self.focus_calibration_data:
             avg_focus = np.mean(self.focus_calibration_data)
@@ -965,50 +804,52 @@ class EEGMonitorGUI(QWidget):
             self.eeg_status_label.setText("Status: Calibration failed.")
             self.calibration_status_label.setText("Calibration: Failed")
 
-    # Plot Updates
+
+
     def update_focus_plot(self, timestamp, beta_metric, threshold_value):
-        """Update the focus plot with new data."""
-        if not self.focus_canvas: return
+         if not self.focus_canvas: return
 
-        # Append data to deques
-        self.focus_times.append(timestamp)
-        self.focus_beta_values.append(beta_metric)
-        self.focus_threshold_values.append(threshold_value)
+         # Append data to deques
+         self.focus_times.append(timestamp)
+         self.focus_beta_values.append(beta_metric)
+         self.focus_threshold_values.append(threshold_value)
 
-        # Update plot lines
-        self.focus_beta_line.set_data(list(self.focus_times), list(self.focus_beta_values))
-        self.focus_thresh_line.set_data(list(self.focus_times), list(self.focus_threshold_values))
+         # Update plot lines
+         self.focus_beta_line.set_data(list(self.focus_times), list(self.focus_beta_values))
+         self.focus_thresh_line.set_data(list(self.focus_times), list(self.focus_threshold_values))
 
-        # Adjust axes to keep a fixed window size of 100 seconds
-        current_max_time = self.focus_times[-1] if self.focus_times else 0
-        self.focus_ax.set_xlim(max(0, current_max_time - 100), current_max_time + 1)
+         # Adjust axes to keep a fixed window size of 100 seconds
+         current_max_time = self.focus_times[-1] if self.focus_times else 0
+         self.focus_ax.set_xlim(max(0, current_max_time - 100), current_max_time + 1)
 
-        self.focus_canvas.draw_idle()
+         self.focus_canvas.draw_idle()
 
+
+
+    # Action for the reset button
     def reset_focus_threshold_action(self):
-        """Reset the focus threshold in the focus detector."""
         if self.focus_detector:
             print("GUI: Resetting focus calculation history in detector.")
             self.focus_detector.reset_threshold()
+
             print("GUI: Focus threshold reset signal sent to detector.")
         else:
              print("GUI: Cannot reset focus threshold - detector not available.")
 
     def update_detector_status(self, status):
-        """Update the status of the EEG detectors and the GUI elements."""
         print(f"Detector Status: {status}")
         # Update the status label based on the detector status if detectors connected to muse
         if "Blink Detector: Connected" in status: self.blink_detector_connected = True
         elif "Focus Detector: Connected" in status: self.focus_detector_connected = True
         elif "stream not found" in status.lower() and ("Blink Detector" in status or "Focus Detector" in status):
-            # Modify EEG status only if LSL stream should to be running
+            # Modify EEG status only if LSL stream is *supposed* to be running
             if self.streaming_thread and self.streaming_thread.is_alive():
                  self.eeg_status_label.setText(f"Status: LSL Stream Found, but Detectors Failed to Connect!")
             else:
                  self.eeg_status_label.setText(f"Status: LSL Stream Not Found for Detectors!")
             self.connect_eeg_button.setText("LSL Failed")
-            self.stop_eeg_detectors() # Stop detectors if stream fails early exit
-            return 
+            self.stop_eeg_detectors() # Stop detectors if stream fails
+            return # Early exit
         elif "Stopped." in status:
             if "Blink Detector" in status: self.blink_detector_connected = False
             if "Focus Detector" in status: self.focus_detector_connected = False
@@ -1021,7 +862,7 @@ class EEGMonitorGUI(QWidget):
                 self.reset_focus_button.setEnabled(False)
                 print("Reset Focus Button Disabled.")
 
-        # Simplified EEG Status Logic
+        # --- Simplified EEG Status Logic ---
         current_eeg_status = ""
         if self.streaming_thread and self.streaming_thread.is_alive():
             current_eeg_status = "Muse: Streaming | "
@@ -1063,106 +904,40 @@ class EEGMonitorGUI(QWidget):
 
         self.update_bluetooth_button_state()
 
+
     def update_bluetooth_button_state(self):
-        """Update the Bluetooth button state based on connection status."""
         enable_bt = self.blink_detector_connected and self.focus_detector_connected
         current_bt_status = self.bluetooth_status_label.text().lower()
         already_connected = "connected!" in current_bt_status or "connected to bt" in current_bt_status
         already_connecting = "connecting..." in current_bt_status or "connecting bt..." in current_bt_status
 
-        # Only enable if detectors are connected and BT is not already connected/connecting
+        # Only enable if detectors are connected AND BT is not already connected/connecting
         self.connect_bluetooth_button.setEnabled(enable_bt and not already_connected and not already_connecting)
 
-    def connect_bluetooth(self, selected_device=None):
-        """Connect to the selected Bluetooth device or start scanning for devices."""
+
+    def connect_bluetooth(self):
         if self.bluetooth_thread and self.bluetooth_thread.isRunning():
             print("GUI: Bluetooth thread already running.")
             return
-        # Check there is a pre-selected device
-        if selected_device or (hasattr(self, 'selected_bt_device') and self.selected_bt_device):
-            # Start the thread with this device
-            device_to_use = selected_device or self.selected_bt_device
-            self.connect_bluetooth_button.setEnabled(False)
-            self.bt_connect_button.setEnabled(False)
-            self.connect_bluetooth_button.setText("Connecting BT...")
-            self.bluetooth_status_label.setText("Bluetooth Status: Connecting to selected device...")
-            
-            if self.bluetooth_thread: # Clean up previous thread if exists
-                print("GUI: Stopping previous Bluetooth thread.")
-                self.bluetooth_thread.stop_thread()
-                self.bluetooth_thread = None
-                self.msleep(100) 
+        self.connect_bluetooth_button.setEnabled(False)
+        self.connect_bluetooth_button.setText("Connecting BT...")
+        self.bluetooth_status_label.setText("Bluetooth Status: Connecting...")
+        if self.bluetooth_thread: # Clean up previous thread if exists
+            print("GUI: Stopping previous Bluetooth thread.")
+            self.bluetooth_thread.stop_thread()
+            self.bluetooth_thread = None
+            self.msleep(100) 
 
-            self.bluetooth_thread = BluetoothThread()
-            self.bluetooth_thread.device_to_connect = device_to_use
-            self.bluetooth_thread.bluetooth_status_signal.connect(self.update_bluetooth_status)
-            self.bluetooth_thread.connection_lost_signal.connect(self.handle_connection_lost)
-            self.bluetooth_thread.devices_found_signal.connect(self.on_bt_devices_found)
-            # Make sure the thread cleans itself up if it finishes unexpectedly
-            self.bluetooth_thread.finished.connect(self.on_bluetooth_thread_finished)
-            self.bluetooth_thread.start()
-        else:
-            # No device selected yet, scan for devices first
-            self.connect_bluetooth_button.setEnabled(False)
-            self.connect_bluetooth_button.setText("Scanning...")
-            self.bluetooth_status_label.setText("Bluetooth Status: Scanning for devices...")
-            
-            if self.bluetooth_thread: # Clean up previous thread if exists
-                print("GUI: Stopping previous Bluetooth thread.")
-                self.bluetooth_thread.stop_thread()
-                self.bluetooth_thread = None
-                self.msleep(100) 
-
-            self.bluetooth_thread = BluetoothThread()
-            self.bluetooth_thread.bluetooth_status_signal.connect(self.update_bluetooth_status)
-            self.bluetooth_thread.connection_lost_signal.connect(self.handle_connection_lost)
-            self.bluetooth_thread.devices_found_signal.connect(self.on_bt_devices_found)
-            # Make sure the thread cleans itself up if it finishes unexpectedly
-            self.bluetooth_thread.finished.connect(self.on_bluetooth_thread_finished)
-            self.bluetooth_thread.start()
-
-    def on_bt_devices_found(self, devices):
-        """Handle ESP_CAR devices found"""
-        print(f"Found {len(devices)} ESP_CAR devices")
-        
-        if len(devices) > 0:
-            # Store devices and populate dropdown
-            self.bt_devices = devices
-            self.bt_dropdown.clear()
-            
-            for device in devices:
-                device_name = device.name or "Unknown"
-                device_address = device.address
-                self.bt_dropdown.addItem(f"{device_name} - {device_address}")
-            
-            # Show the dropdown
-            self.set_bt_dropdown_visible(True)
-            
-            if len(devices) == 1:
-                # Auto-connect if there's only one device
-                self.bt_dropdown.setCurrentIndex(0)
-                self.selected_bt_device = devices[0]
-                self.bluetooth_status_label.setText("Bluetooth Status: Found 1 ESP_CAR device. Auto-connecting...")
-                # Disable the dropdown since we're connecting
-                self.bt_dropdown.setEnabled(False)
-                # Connect automatically
-                self.connect_selected_bt()
-            else:
-                # Multiple devices - let user choose
-                self.bluetooth_status_label.setText(f"Bluetooth Status: Found {len(devices)} ESP_CAR devices. Please select one.")
-                self.connect_bluetooth_button.setText("Connect to Bluetooth Car")
-                self.connect_bluetooth_button.setEnabled(False)  # Will be enabled when a device is selected
-        else:
-            # No devices found
-            self.set_bt_dropdown_visible(False)
-            self.bluetooth_status_label.setText("Bluetooth Status: No ESP_CAR devices found")
-            self.connect_bluetooth_button.setText("Connect to Bluetooth Car")
-            self.connect_bluetooth_button.setEnabled(True)  # Allow to try scan again
+        self.bluetooth_thread = BluetoothThread()
+        self.bluetooth_thread.bluetooth_status_signal.connect(self.update_bluetooth_status)
+        self.bluetooth_thread.connection_lost_signal.connect(self.handle_connection_lost)
+        # Make sure the thread cleans itself up if it finishes unexpectedly
+        self.bluetooth_thread.finished.connect(self.on_bluetooth_thread_finished)
+        self.bluetooth_thread.start()
 
     def on_bluetooth_thread_finished(self):
-        """Handle Bluetooth thread finished signal."""
         print("GUI: Bluetooth thread finished signal received.")
-        # Check if the status is not already disconnect/error
+        # Check if the status isn't already reflecting a disconnect/error
         current_status = self.bluetooth_status_label.text()
         if "Connected" in current_status and not "Error" in current_status and not "Disconnected" in current_status:
              # If thread finished but status was 'Connected', assume it lost connection
@@ -1170,18 +945,12 @@ class EEGMonitorGUI(QWidget):
         self.bluetooth_thread = None # Clear the reference
 
     def update_bluetooth_status(self, status):
-        """Update the Bluetooth status label and button based on connection status."""
         self.bluetooth_status_label.setText(f"Bluetooth Status: {status}")
         if "Connected!" in status:
             self.connect_bluetooth_button.setEnabled(False)
             self.connect_bluetooth_button.setText("Connected to BT")
             self.bluetooth_status_label.setStyleSheet("color: green;")
             QTimer.singleShot(3000, lambda: self.bluetooth_status_label.setStyleSheet(""))
-            
-            # Disable both the Bluetooth dropdown and connect button after successful connection
-            self.bt_dropdown.setEnabled(False)
-            self.bt_connect_button.setEnabled(False)
-            self.bt_connect_button.setText("Connected to Car")
         elif "Disconnected" in status or "Failed" in status or "Error" in status or "LOST" in status:
             self.connect_bluetooth_button.setText("Connect to Bluetooth Car")
             # Re-check if detectors are still running before enabling
@@ -1190,17 +959,11 @@ class EEGMonitorGUI(QWidget):
             if "Failed" in status or "Error" in status or "LOST" in status:
                 self.bluetooth_status_label.setStyleSheet("color: red;")
                 QTimer.singleShot(3000, lambda: self.bluetooth_status_label.setStyleSheet(""))
-                
-                # Re-enable dropdown and button on failure
-                self.bt_dropdown.setEnabled(True)
-                self.bt_connect_button.setText("Connect to Car")
-                if hasattr(self, 'selected_bt_device') and self.selected_bt_device:
-                    self.bt_connect_button.setEnabled(True)
         # Update state based on the new status immediately
         self.update_bluetooth_button_state()
 
+
     def handle_connection_lost(self):
-        """Handle Bluetooth connection lost signal."""
         print("GUI: Bluetooth connection lost signal received.")
         self.bluetooth_status_label.setText("Bluetooth Status: CONNECTION LOST")
         self.bluetooth_status_label.setStyleSheet("color: red; font-weight: bold;")
@@ -1215,15 +978,9 @@ class EEGMonitorGUI(QWidget):
              # Disconnect might fail if already lost, but try stopping the loop/thread
              self.bluetooth_thread.stop_thread()
         self.bluetooth_thread = None
-        
-        # Re-enable the BT dropdown and connect button when connection is lost
-        self.bt_dropdown.setEnabled(True)
-        self.bt_connect_button.setText("Connect to Car")
-        if hasattr(self, 'selected_bt_device') and self.selected_bt_device:
-            self.bt_connect_button.setEnabled(True)
+
 
     def update_movement(self, direction):
-        """Handle blink detection and send movement commands."""
         if self.calibration_in_progress:
             print("Bluetooth blocked: Calibration in progress.")
             return
@@ -1253,7 +1010,6 @@ class EEGMonitorGUI(QWidget):
             self.bluetooth_thread.send_command(command)
 
     def reset_direction_display(self):
-        """Reset the direction display after a turn."""
         print("GUI: Resetting direction display after turn.")
         # Display should reflect focus state and direction mode
         if self._check_bluetooth_connection():
@@ -1272,8 +1028,8 @@ class EEGMonitorGUI(QWidget):
             # If BT disconnected while turning, just show stop
             self.movement_display.setText("Stop")
 
+
     def update_focus(self, focused):
-        """Update the focus state based on the detector's output."""
         if self.calibration_in_progress:
             print("Bluetooth blocked: Calibration in progress.")
             return
@@ -1285,7 +1041,7 @@ class EEGMonitorGUI(QWidget):
         if not self._check_bluetooth_connection():
             print("GUI: Bluetooth not connected, ignoring focus change.")
             # Update display even if not connected
-            if not self.direction_timer.isActive(): # Do not override turning display
+            if not self.direction_timer.isActive(): # Don't override turning display
                  self.movement_display.setText("Stop")
             return
 
@@ -1304,14 +1060,16 @@ class EEGMonitorGUI(QWidget):
                 print(f"GUI: Sending focus-based command: {command}")
                 self.bluetooth_thread.send_command(command)
         elif not self.direction_timer.isActive():
-             # If focus did not change, but could have timer expired, ensure display matches state
+             # If focus didn't change, but maybe timer expired, ensure display matches state
              if self.is_moving_forward:
                   self.movement_display.setText("Moving FORWARD")
              else:
                   self.movement_display.setText("Stop")
 
+
+
     def _check_bluetooth_connection(self):
-        """Check if the Bluetooth thread is running and connected."""
+        # More robust check
         return (self.bluetooth_thread is not None and
                 self.bluetooth_thread.isRunning() and
                 hasattr(self.bluetooth_thread, 'controller') and
@@ -1319,8 +1077,8 @@ class EEGMonitorGUI(QWidget):
                 self.bluetooth_thread.controller.connected and
                 self.bluetooth_thread.was_connected)
 
+
     def stop_eeg_detectors(self):
-        """Stop the EEG detectors and clean up resources."""
         print("GUI: Stopping EEG detector threads...")
         if self.blink_thread and self.blink_thread.isRunning():
             if self.blink_detector:
@@ -1337,46 +1095,46 @@ class EEGMonitorGUI(QWidget):
             if not self.focus_thread.wait(1500): # Increased wait time
                 print("Warning: Focus thread did not finish quitting gracefully.")
 
+
+
     def on_detector_finished(self):
-        """Handle the finished signal from the detector threads."""
         sender_obj = self.sender()
         if sender_obj: # Check if sender exists
             print(f"GUI: Detector object finished signal: {type(sender_obj).__name__}")
 
     def on_detector_thread_finished(self):
-        """Handle the finished signal from the detector threads."""
-        sender_thread = self.sender()
-        if not sender_thread: return # Should not happen, but check
+         sender_thread = self.sender()
+         if not sender_thread: return # Should not happen, but check
 
-        print(f"GUI: Detector thread finished: {sender_thread}")
-        if sender_thread == self.blink_thread:
-            print("Cleaning up blink detector resources.")
-            self.blink_detector = None # Allow garbage collection
-            self.blink_thread = None
-            self.blink_detector_connected = False
-            status_update = "Blink Detector Stopped."
-        elif sender_thread == self.focus_thread:
-            print("Cleaning up focus detector resources.")
-            self.focus_detector = None # Allow garbage collection
-            self.focus_thread = None
-            self.focus_detector_connected = False
-            self.reset_focus_button.setEnabled(False) # Ensure reset button is disabled
-            status_update = "Focus Detector Stopped."
-        else:
-            status_update = "Unknown Detector Stopped."
+         print(f"GUI: Detector thread finished: {sender_thread}")
+         if sender_thread == self.blink_thread:
+              print("Cleaning up blink detector resources.")
+              self.blink_detector = None # Allow garbage collection
+              self.blink_thread = None
+              self.blink_detector_connected = False
+              status_update = "Blink Detector Stopped."
+         elif sender_thread == self.focus_thread:
+              print("Cleaning up focus detector resources.")
+              self.focus_detector = None # Allow garbage collection
+              self.focus_thread = None
+              self.focus_detector_connected = False
+              self.reset_focus_button.setEnabled(False) # Ensure reset button is disabled
+              status_update = "Focus Detector Stopped."
+         else:
+              status_update = "Unknown Detector Stopped."
 
-        # Update status only after cleaning up references
-        self.update_detector_status(status_update)
-        # Re-evaluate button states now that a thread has finished
-        self.update_bluetooth_button_state()
-        # If *both* threads are now None, re-enable the connect button (if LSL stream active)
-        if not self.blink_thread and not self.focus_thread:
-            print("GUI: Both detector threads finished.")
-            self.connect_eeg_button.setText("Connect to EEG Stream")
-            self.connect_eeg_button.setEnabled(self.streaming_thread is not None and self.streaming_thread.is_alive())
+         # Update status only after cleaning up references
+         self.update_detector_status(status_update)
+         # Re-evaluate button states now that a thread has finished
+         self.update_bluetooth_button_state()
+         # If *both* threads are now None, re-enable the connect button (if LSL stream active)
+         if not self.blink_thread and not self.focus_thread:
+              print("GUI: Both detector threads finished.")
+              self.connect_eeg_button.setText("Connect to EEG Stream")
+              self.connect_eeg_button.setEnabled(self.streaming_thread is not None and self.streaming_thread.is_alive())
+
 
     def closeEvent(self, event):
-        """Handle the close event for the GUI."""
         print("GUI: Close event triggered. Cleaning up...")
         self.stop_eeg_detectors() # Stop detectors first
 
@@ -1398,27 +1156,22 @@ class EEGMonitorGUI(QWidget):
         QApplication.processEvents() # Process any pending events
         self.msleep(100)
 
-        # Hide dropdowns on close
-        self.set_muse_dropdown_visible(False)
-        self.set_bt_dropdown_visible(False)
-
         print("GUI: Cleanup finished.")
         event.accept()
 
     def msleep(self, msecs):
-        """Sleep for a specified number of milliseconds."""
         loop = QEventLoop()
         QTimer.singleShot(msecs, loop.quit)
         loop.exec()
 
+
 # Run Stream Function
 def run_stream_in_thread(address):
-    """Run the Muse LSL stream in a separate thread."""
     if not stream:
         print("muselsl stream function not available.")
         return
 
-    # Set up asyncio event loop for this thread
+    # --- Set up asyncio event loop for this thread ---
     loop = None
     try:
         loop = asyncio.new_event_loop()
@@ -1428,7 +1181,7 @@ def run_stream_in_thread(address):
         print(f"Streaming Thread: Failed to set up asyncio loop: {e}")
         # If loop setup fails, bleak backend won't work, so exit.
         return
-    
+    # --- End asyncio setup ---
 
     try:
         print(f"Streaming Thread: Starting Muse LSL stream for address: {address}...")
@@ -1446,18 +1199,18 @@ def run_stream_in_thread(address):
         import traceback
         traceback.print_exc()
     finally:
-        # Clean up the asyncio loop for this thread 
+        # --- Clean up the asyncio loop for this thread ---
         if loop and not loop.is_closed():
             try:
-                # Stop the loop if it is running (might not be if stream errored out early)
+                # Stop the loop if it's running (might not be if stream errored out early)
                 if loop.is_running():
                     loop.call_soon_threadsafe(loop.stop)
-                    pass # Just close
+                    pass # Avoid sleep here, just close
                 loop.close()
                 print(f"Streaming Thread: Closed asyncio loop for thread {threading.current_thread().name}")
             except Exception as loop_close_e:
                 print(f"Streaming Thread: Error closing asyncio loop: {loop_close_e}")
-        
+        # --- End asyncio cleanup ---
         print(f"Streaming Thread: Exiting thread {threading.current_thread().name}.")
 
 
