@@ -1,4 +1,3 @@
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,10 +22,19 @@
 
 #define GATTS_TAG "GATTS"
 
+// Motor control pins
 #define in1 GPIO_NUM_15
 #define in2 GPIO_NUM_2
 #define in3 GPIO_NUM_4
 #define in4 GPIO_NUM_16
+#define rev_LED GPIO_NUM_17
+
+// BLE server name and UUIDs 
+#define TEST_DEVICE_NAME "ESP_CAR"
+#define SERVICE_UUID_HEX 0x00FF
+#define CHAR_UUID_HEX 0xFF01
+#define SERVICE_UUID "000000ff-0000-1000-8000-00805f9b34fb"
+#define CHARACTERISTIC_UUID "0000ff01-0000-1000-8000-00805f9b34fb"
 
 ///Declare the static function
 static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
@@ -34,14 +42,15 @@ static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 
 // Function prototypes for motor control
 void Forward();
-void Backward();
+void Reverse();
 void Left();
 void Right();
 void Stop();
-void movement_task(void *pvParameter);
+void Reverse_LED_ON();
+void Reverse_LED_OFF();
 
-#define GATTS_SERVICE_UUID_TEST_A   0x00FF
-#define GATTS_CHAR_UUID_TEST_A      0xFF01
+#define GATTS_SERVICE_UUID_TEST_A   SERVICE_UUID_HEX
+#define GATTS_CHAR_UUID_TEST_A      CHAR_UUID_HEX
 #define GATTS_DESCR_UUID_TEST_A     0x3333
 #define GATTS_NUM_HANDLE_TEST_A     4
 
@@ -50,7 +59,6 @@ void movement_task(void *pvParameter);
 #define GATTS_DESCR_UUID_TEST_B     0x2222
 #define GATTS_NUM_HANDLE_TEST_B     4
 
-#define TEST_DEVICE_NAME            "ESP_GATTS"
 #define TEST_MANUFACTURER_DATA_LEN  17
 
 #define GATTS_DEMO_CHAR_VAL_LEN_MAX 0x40
@@ -401,21 +409,39 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
                 }
 
             }
-            char received[5] = {0};
-            memcpy(received, param->write.value, param->write.len < 4 ? param->write.len : 4);
+            char received[20] = {0};
+            memcpy(received, param->write.value, param->write.len < 19 ? param->write.len : 19);
+            received[param->write.len] = '\0';
             
-            if (strcmp(received, "ON") == 0){
-                // gpio_set_level(GPIO_NUM_2, 1);
+            if (strcmp(received, "MOVE_FORWARD") == 0) {
                 Forward();
                 ESP_LOGI(GATTS_TAG, "Forward");
-                // ESP_LOGI(GATTS_TAG, "GPIO2 turned ON");
-            }
-            else if (strcmp(received, "OFF") == 0){
-                // gpio_set_level(GPIO_NUM_2, 0);
+            } 
+            else if (strcmp(received, "STOP") == 0) {
                 Stop();
                 ESP_LOGI(GATTS_TAG, "Stop");
-                // ESP_LOGI(GATTS_TAG, "GPIO2 turned OFF");
             }
+            else if (strcmp(received, "MOVE_LEFT") == 0) {
+                Left();
+                ESP_LOGI(GATTS_TAG, "Left");
+            }
+            else if (strcmp(received, "MOVE_RIGHT") == 0) {
+                Right();
+                ESP_LOGI(GATTS_TAG, "Right");
+            }
+            else if (strcmp(received, "MOVE_REVERSE") == 0) {
+                Reverse();
+                ESP_LOGI(GATTS_TAG, "Reverse");
+            }
+            else if (strcmp(received, "REVERSE_LED_ON") == 0) {
+                Reverse_LED_ON();
+                ESP_LOGI(GATTS_TAG, "Reverse LED ON");
+            }
+            else if (strcmp(received, "REVERSE_LED_OFF") == 0) {
+                Reverse_LED_OFF();
+                ESP_LOGI(GATTS_TAG, "Reverse LED OFF");
+            }
+
         }
         example_write_event_env(gatts_if, &a_prepare_write_env, param);
         break;
@@ -699,31 +725,35 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
 
 // Movement functions
 void Forward() {
-    gpio_set_level(in1, 0);
-    gpio_set_level(in2, 1);
-    gpio_set_level(in3, 1);
-    gpio_set_level(in4, 0);
-}
-
-void Backward() {
     gpio_set_level(in1, 1);
     gpio_set_level(in2, 0);
     gpio_set_level(in3, 0);
     gpio_set_level(in4, 1);
 }
 
-void Left() {
+void Reverse() {
     gpio_set_level(in1, 0);
     gpio_set_level(in2, 1);
-    gpio_set_level(in3, 0);
-    gpio_set_level(in4, 1);
+    gpio_set_level(in3, 1);
+    gpio_set_level(in4, 0);
 }
 
 void Right() {
+    gpio_set_level(in1, 0);
+    gpio_set_level(in2, 1);
+    gpio_set_level(in3, 0);
+    gpio_set_level(in4, 1);
+    vTaskDelay(pdMS_TO_TICKS(250));
+    Stop();
+}
+
+void Left() {
     gpio_set_level(in1, 1);
     gpio_set_level(in2, 0);
     gpio_set_level(in3, 1);
     gpio_set_level(in4, 0);
+    vTaskDelay(pdMS_TO_TICKS(250));
+    Stop();
 }
 
 void Stop() {
@@ -733,24 +763,13 @@ void Stop() {
     gpio_set_level(in4, 0);
 }
 
-// Movement task
-void movement_task(void *pvParameter) {
-    while (1) {
-        Forward();
-        vTaskDelay(pdMS_TO_TICKS(5000));
-        Stop();
-        vTaskDelay(pdMS_TO_TICKS(2000));
-        Backward();
-        vTaskDelay(pdMS_TO_TICKS(5000));
-        Stop();
-        vTaskDelay(pdMS_TO_TICKS(2000));
-        Right();
-        vTaskDelay(pdMS_TO_TICKS(5000));
-        Left();
-        vTaskDelay(pdMS_TO_TICKS(5000));
-        Stop();
-        vTaskDelay(pdMS_TO_TICKS(5000));
-    }
+// Functions for controlling reverse LED
+void Reverse_LED_ON() {
+    gpio_set_level(rev_LED, 1);
+}
+
+void Reverse_LED_OFF() {
+    gpio_set_level(rev_LED, 0);
 }
 
 void app_main(void)
@@ -816,12 +835,7 @@ void app_main(void)
         ESP_LOGE(GATTS_TAG, "set local  MTU failed, error code = %x", local_mtu_ret);
     }
 
-    // Initialize GPIO2
-    gpio_reset_pin(GPIO_NUM_2);
-    gpio_set_direction(GPIO_NUM_2, GPIO_MODE_OUTPUT);
-    gpio_set_level(GPIO_NUM_2, 0); 
-
-    // Initialize GPIOs
+    // Initialize GPIOs for motor control and reverse LED
     gpio_reset_pin(in1);
     gpio_set_direction(in1, GPIO_MODE_OUTPUT);
     gpio_reset_pin(in2);
@@ -830,9 +844,26 @@ void app_main(void)
     gpio_set_direction(in3, GPIO_MODE_OUTPUT);
     gpio_reset_pin(in4);
     gpio_set_direction(in4, GPIO_MODE_OUTPUT);
+    gpio_reset_pin(rev_LED);
+    gpio_set_direction(rev_LED, GPIO_MODE_OUTPUT);
 
-    // // Create movement task
-    // xTaskCreate(&movement_task, "movement_task", 2048, NULL, 5, NULL);
+    // Testing motor functionality at startup 
+    Stop();
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    Left();
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    Right();
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    Forward();
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    Stop();
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    Reverse_LED_ON();
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    Reverse();
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    Reverse_LED_OFF();
+    Stop();
 
     return;
 }

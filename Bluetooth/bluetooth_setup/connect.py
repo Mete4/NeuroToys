@@ -1,7 +1,7 @@
 import asyncio
-from bleak import BleakClient
-from bluetooth import scan_for_device, connect_to_device, handle_notification, CHARACTERISTIC_UUID
-import json
+from bluetooth import BluetoothController
+
+controller = None
 
 async def handle_client(reader, writer):
     while True:
@@ -10,33 +10,35 @@ async def handle_client(reader, writer):
             break
         message = data.decode().strip()
         print(f"Received command: {message}")
-        if message is not None:
-            await client.write_gatt_char(CHARACTERISTIC_UUID, message.encode())
+        if message and message != "exit":
+            await controller.send_command(message)
             print(f"Sent message: {message}")
         elif message == "exit":
             print("Exiting...")
             writer.close()
             await writer.wait_closed()
-            await client.disconnect()
+            await controller.disconnect()
             break
 
 async def maintain_connection():
+    global controller
+    controller = BluetoothController()
+    
     # Find and connect to device
-    device = await scan_for_device()
+    device = await controller.scan_for_device()
     if not device:
         print("Device not found!")
         return
 
     print(f"Found device: {device.name} ({device.address})")
-    global client
-    client = await connect_to_device(device)
+    connected = await controller.connect()
     
-    if not client:
+    if not connected:
         print("Failed to connect")
         return
 
     # Start notification handler
-    await client.start_notify(CHARACTERISTIC_UUID, handle_notification)
+    await controller.subscribe_to_notifications()
     print("Connected and ready to receive commands!")
 
     # Start TCP server
