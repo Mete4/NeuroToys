@@ -283,7 +283,7 @@ graph TD
 This project is developed primarily in Python and relies on several external libraries. The ESP32 car requires separate firmware development and flashing tools.
 
 *   **Operating System**: Windows 10/11, macOS. The Python software was tested working on both operating systems.
-*   **Programming Language**: Python (>= 3.8 recommended, tested with 3.12.7 as per User Manual).
+*   **Programming Language**: Python (>= 3.8 recommended, tested with 3.12.7).
 *   **Key Python Libraries**: Based on the provided [`requirements.txt`](requirements.txt) file.
     *   `bleak==0.22.3`: Cross-platform Bluetooth Low Energy client. Used by [`BluetoothController`](Bluetooth/bluetooth_setup/bluetooth.py) for all BLE interactions.
     *   `matplotlib==3.10.1`: For plotting EEG data and focus metrics in the GUI ([`new_gui.py`](muse/new_gui.py)).
@@ -343,7 +343,7 @@ These steps guide you through setting up the Python environment and installing t
     *   Power on the headset.
 
 7.  **Running the Application**:
-    *   Refer to the "Usage" section in the **NeuroToys User Manual** ([`reports/usermanual.pdf`](reports/usermanual.pdf)) for detailed instructions on preparing hardware and launching the main GUI application ([`new_gui.py`](muse/new_gui.py)).
+    *   Refer to the "Usage" section in the **NeuroToys User Manual** ([`documents/UserManual.pdf`](documents/UserManual.pdf)) for detailed instructions on preparing hardware and launching the main GUI application ([`new_gui.py`](muse/new_gui.py)).
     *   The main application script [`new_gui.py`](muse/new_gui.py) is located in the [`muse`](muse/) subdirectory. From the main project directory, you would typically run it by navigating to the [`muse`](muse/) and running it like:
         ```bash
         cd muse
@@ -352,7 +352,7 @@ These steps guide you through setting up the Python environment and installing t
 
 ## 5. Usage
 
-Refer to the **NeuroToys User Manual** ([`reports/usermanual.pdf`](reports/usermanual.pdf)) for detailed instructions on how to prepare the hardware (car, headset), set up the headset properly, launch the main GUI application ([`new_gui.py`](muse/new_gui.py)), connect to the Muse headset and LSL stream, connect to the Bluetooth car, calibrate the focus threshold, and control the car using blinks and focus.
+Refer to the **NeuroToys User Manual** ([`documents/UserManual.pdf`](documents/UserManual.pdf)) for detailed instructions on how to prepare the hardware (car, headset), set up the headset properly, launch the main GUI application ([`new_gui.py`](muse/new_gui.py)), connect to the Muse headset and LSL stream, connect to the Bluetooth car, calibrate the focus threshold, and control the car using blinks and focus.
 
 The scripts in [`Bluetooth/bluetooth_setup`](Bluetooth/bluetooth_setup/) ([`connect.py`](Bluetooth/bluetooth_setup/connect.py), [`example.py`](Bluetooth/bluetooth_setup/example.py), [`input.py`](Bluetooth/bluetooth_setup/input.py), [`send.py`](Bluetooth/bluetooth_setup/send.py)) are primarily for testing and demonstration of the Bluetooth communication layer and are not part of the standard GUI application workflow described in the User Manual.
 
