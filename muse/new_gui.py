@@ -1194,20 +1194,10 @@ class EEGMonitorGUI(QWidget):
             # Show the dropdown
             self.set_bt_dropdown_visible(True)
             
-            if len(devices) == 1:
-                # Auto-connect if there's only one device
-                self.bt_dropdown.setCurrentIndex(0)
-                self.selected_bt_device = devices[0]
-                self.bluetooth_status_label.setText("Bluetooth Status: Found 1 ESP_CAR device. Auto-connecting...")
-                # Disable the dropdown since we're connecting
-                self.bt_dropdown.setEnabled(False)
-                # Connect automatically
-                self.connect_selected_bt()
-            else:
-                # Multiple devices - let user choose
-                self.bluetooth_status_label.setText(f"Bluetooth Status: Found {len(devices)} ESP_CAR devices. Please select one.")
-                self.connect_bluetooth_button.setText("Connect to Bluetooth Car")
-                self.connect_bluetooth_button.setEnabled(False)  # Will be enabled when a device is selected
+            # Device found - let user choose
+            self.bluetooth_status_label.setText(f"Bluetooth Status: Found {len(devices)} ESP_CAR devices. Please select one.")
+            self.connect_bluetooth_button.setText("Connect to Bluetooth Car")
+            self.connect_bluetooth_button.setEnabled(False)  # Will be enabled when a device is selected
         else:
             # No devices found
             self.set_bt_dropdown_visible(False)
