@@ -22,8 +22,8 @@ from focus_detection import FocusDetector
 try:
     sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'Bluetooth/bluetooth_setup'))
     from bluetooth import BluetoothController
-except ImportError:
-    print("ERROR: Could not import BluetoothController.")
+except ImportError as e:
+    print(f"ERROR: Could not import BluetoothController. {e}")
     sys.exit(1)
 
 try:
