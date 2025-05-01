@@ -3,8 +3,9 @@ import asyncio
 import threading
 import numpy as np
 import os
-from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame, QSizePolicy, QSlider, QCheckBox, QComboBox
-from PyQt6.QtCore import QThread, pyqtSignal, QTimer, QEventLoop, Qt
+from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame, QSizePolicy, QSlider, QCheckBox, QComboBox, QSpacerItem
+from PyQt6.QtCore import QThread, pyqtSignal, QTimer, QEventLoop, Qt, QSize
+from PyQt6.QtGui import QPixmap, QIcon
 from time import time
 
 import matplotlib
@@ -357,8 +358,30 @@ class EEGMonitorGUI(QWidget):
         self.calibration_status_label.setStyleSheet("margin-left: 20px; color: black;")
         status_layout.addWidget(self.calibration_status_label)
 
-        status_layout.addStretch() 
+        # Add stretch to push everything left
+        status_layout.addStretch()
+
+        import os
+
+# Get absolute path to image in "images" folder relative to this script
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        logo_path = os.path.join(script_dir, "images", "logo.png")
+        if os.path.exists(logo_path):
+            logo_pixmap = QPixmap(logo_path)
+            if not logo_pixmap.isNull():
+                self.logo_label = QLabel()
+                scaled_pixmap = logo_pixmap.scaledToHeight(80, Qt.TransformationMode.SmoothTransformation)
+                self.logo_label.setPixmap(scaled_pixmap)
+                self.logo_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+                status_layout.addWidget(self.logo_label)
+            else:
+                print(f"Warning: QPixmap failed to load image at {logo_path}")
+        else:
+            print(f"Warning: Logo file not found at {logo_path}")
+
+        # Add to layout
         layout.addLayout(status_layout)
+
 
 
         self.bluetooth_status_label = QLabel("Bluetooth Status: Not Connected")
@@ -408,23 +431,56 @@ class EEGMonitorGUI(QWidget):
         layout.addLayout(device_selection_layout)
         
 
+        button_layout = QHBoxLayout()
+        button_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        # Buttons
+        button_style = """
+            QPushButton {
+                text-align: left;
+                padding-left: 20px;
+                padding-right: 15px;
+            }
+        """
+
+        # Scan and Start Muse Stream Button
         self.scan_stream_button = QPushButton("Scan and Start Muse Stream")
+        self.scan_stream_button.setMinimumWidth(270)
+        self.scan_stream_button.setFixedHeight(65)
+        self.scan_stream_button.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        self.scan_stream_button.setIcon(QIcon(os.path.join(script_dir, "images", "muse.png")))
+        self.scan_stream_button.setIconSize(QSize(40, 40))
+        self.scan_stream_button.setStyleSheet(button_style)
         self.scan_stream_button.clicked.connect(self.scan_and_start_muse)
         self.scan_stream_button.setEnabled(list_muses is not None and Muse is not None)
-        if list_muses is None or Muse is None: self.scan_stream_button.setToolTip("muselsl library or Muse class not found")
-        layout.addWidget(self.scan_stream_button)
+        if list_muses is None or Muse is None:
+            self.scan_stream_button.setToolTip("muselsl library or Muse class not found")
+        button_layout.addWidget(self.scan_stream_button)
 
+        # Connect to EEG Stream Button
         self.connect_eeg_button = QPushButton("Connect to EEG Stream")
+        self.connect_eeg_button.setMinimumWidth(270)
+        self.connect_eeg_button.setFixedHeight(65)
+        self.connect_eeg_button.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        self.connect_eeg_button.setIcon(QIcon(os.path.join(script_dir, "images", "eeg.png")))
+        self.connect_eeg_button.setIconSize(QSize(40, 40))
+        self.connect_eeg_button.setStyleSheet(button_style)
         self.connect_eeg_button.clicked.connect(self.start_eeg_detectors)
-        layout.addWidget(self.connect_eeg_button)
+        button_layout.addWidget(self.connect_eeg_button)
 
-        
+        # Connect to Bluetooth Car Button
         self.connect_bluetooth_button = QPushButton("Connect to Bluetooth Car")
+        self.connect_bluetooth_button.setMinimumWidth(270)
+        self.connect_bluetooth_button.setFixedHeight(65)
+        self.connect_bluetooth_button.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        self.connect_bluetooth_button.setIcon(QIcon(os.path.join(script_dir, "images", "car.png")))
+        self.connect_bluetooth_button.setIconSize(QSize(40, 40))
+        self.connect_bluetooth_button.setStyleSheet(button_style)
         self.connect_bluetooth_button.setEnabled(False)
         self.connect_bluetooth_button.clicked.connect(self.connect_bluetooth)
-        layout.addWidget(self.connect_bluetooth_button)
+        button_layout.addWidget(self.connect_bluetooth_button)
+
+        # Add the layout to the main GUI
+        layout.addLayout(button_layout)
 
         plots_layout = QVBoxLayout()
         left_right_layout = QHBoxLayout() 
@@ -518,7 +574,7 @@ class EEGMonitorGUI(QWidget):
         layout.addLayout(plots_layout)
 
         self.setLayout(layout)
-        self.setWindowTitle("EEG Car Monitor")
+        self.setWindowTitle("NeuroToys Monitor")
         self.resize(1200, 800)
     
     def toggle_manual_threshold(self, checked):
