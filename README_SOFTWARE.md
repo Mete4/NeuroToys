@@ -305,10 +305,10 @@ This project is developed primarily in Python and relies on several external lib
 
 ## 4. Installation Guide (From Scratch)
 
-These steps guide you through setting up the Python environment and installing the necessary libraries. Setting up and flashing the ESP32 firmware requires separate steps not detailed here; refer to [`README_HARDWARE.md`](README_HARDWARE.md) for hardware information.
+These steps guide you through setting up the Python environment and installing the necessary libraries. Setting up and flashing the ESP32 firmware requires separate steps not explained here. Refer to [`README_HARDWARE.md`](README_HARDWARE.md) for hardware information.
 
 1.  **Install Python**:
-    *   Download and install Python (>= 3.8 recommended, User Manual mentions 3.12.7) from [python.org](https://www.python.org/).
+    *   Download and install Python (>= 3.8 recommended, Tested with 3.12.7) from [python.org](https://www.python.org/).
     *   Ensure Python and `pip` are added to your system's PATH during installation. Verify by opening Command Prompt/Terminal and typing `python --version` and `pip --version`.
 
 2.  **Get the Source Code**:
@@ -344,9 +344,10 @@ These steps guide you through setting up the Python environment and installing t
 
 7.  **Running the Application**:
     *   Refer to the "Usage" section in the **NeuroToys User Manual** ([`reports/usermanual.pdf`](reports/usermanual.pdf)) for detailed instructions on preparing hardware and launching the main GUI application ([`new_gui.py`](muse/new_gui.py)).
-    *   The main application script [`new_gui.py`](muse/new_gui.py) is located in the [`muse`](muse/) subdirectory. From the main project directory, you would typically run it like:
+    *   The main application script [`new_gui.py`](muse/new_gui.py) is located in the [`muse`](muse/) subdirectory. From the main project directory, you would typically run it by navigating to the [`muse`](muse/) and running it like:
         ```bash
-        python muse/new_gui.py
+        cd muse
+        python new_gui.py
         ```
 
 ## 5. Usage
@@ -354,3 +355,4 @@ These steps guide you through setting up the Python environment and installing t
 Refer to the **NeuroToys User Manual** ([`reports/usermanual.pdf`](reports/usermanual.pdf)) for detailed instructions on how to prepare the hardware (car, headset), set up the headset properly, launch the main GUI application ([`new_gui.py`](muse/new_gui.py)), connect to the Muse headset and LSL stream, connect to the Bluetooth car, calibrate the focus threshold, and control the car using blinks and focus.
 
 The scripts in [`Bluetooth/bluetooth_setup`](Bluetooth/bluetooth_setup/) ([`connect.py`](Bluetooth/bluetooth_setup/connect.py), [`example.py`](Bluetooth/bluetooth_setup/example.py), [`input.py`](Bluetooth/bluetooth_setup/input.py), [`send.py`](Bluetooth/bluetooth_setup/send.py)) are primarily for testing and demonstration of the Bluetooth communication layer and are not part of the standard GUI application workflow described in the User Manual.
+
