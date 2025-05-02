@@ -1,44 +1,13 @@
 # NeuroToys: Non-Invasive Brain-Computer Interface for Real-Time Robot Control
 
 ## Project Overview
-NeuroToys is a senior capstone project aimed at developing a non-invasive brain-computer interface (BCI) that allows users to control a robotic device in real-time using EEG signals. The system interprets brainwave patterns to translate them into commands for robot movement, improving accessibility for individuals with physical disabilities. This project combines expertise in mechanical design, electrical engineering, and machine learning.
+NeuroToys is a senior capstone project aimed at developing a non-invasive brain-computer interface (BCI) that allows users to control a robotic device in real-time using EEG signals. The system interprets brainwave patterns to translate them into commands for robot movement, improving accessibility for individuals with physical disabilities. This project combines expertise in mechanical design, electrical engineering, and software applications. 
 
-## Project Structure
+## Current State
+Currently, users are able to command the robotic car to move forward, turn left, and turn right. A single blink with the left eye turns the car left, and a single blink with the right eye turns the car right. Achieving a high level of concentration moves the car forward. We control this with a central PyQt GUI, which controls connecting to the EEG, streaming its data, connecting to the Bluetooth car, monitoring incoming data and thresholds/detection, setting manual focus thresholds, and calibrating focus level. For focus detection, we currently use an RMS-based dynamic threshold, isolating the beta range of brain data coming in from the AF7 sensor of the Muse 2 EEG headset (directly above the left eye). This is the range between 12 to 30 Hz of signals coming in. The "focus level" is the calculated power of these waves coming in in real time. When the focus level goes above the threshold, a Bluetooth command is sent to the car to move forward. For blink detection, we filter out 0.5-5 Hz and use blinking artifacts to send commands to turn the car's direction left or right. We use the AF7 (left eye) and AF8 (right eye) channels on the headset for the signals, and detect it by detecting if the filtered curve goes down then up steeply in a short period of time. This is classified as a blink. 
 
-### `/Bluetooth`
-Contains components related to Bluetooth Low Energy (BLE) communication and ESP32 control.
+## Current Issues
+Because of the delicacy of the focus threshold, we have a manual threshold setter, a threshold calibration mode, and a threshold reset button for the greatest amount of flexibility. Despite this, placement of the EEG on the forehead is the greatest factor for success. For example, the BCI currently works more accurately on some of our team member's heads than others. This is a fault and more user-friendly ways of calibrating the EEG to universally work are areas for future improvement. Additionally, the blink detection can be fragile. Currently, we have a threshold-based detection that detects the specific shape of the filtered curve to designate a blink. However, when a blink occurs, this shape is not always the same, and therefore in these cases it is not classified well. We considered collecting data to train our own machine learning model to classify blinks based on our setup instead of using a fragile, hardcoded approach as we are using now. Our GUI is also not currently standalone. We run a main Python script which starts our PyQt GUI. Future improvements include creating a standalone GUI in addition to an app to host this on that is more user friendly, so a user would not have to be running a Python script in a terminal and install dependencies manually. 
 
-#### `/Bluetooth/bluetooth_setup`
-Python scripts for BLE client-side operations:
-- `bluetooth.py`: Core `BluetoothController` class managing BLE interactions. Handles scanning (specific device `ESP_CAR` or all), connection, service/characteristic discovery, command sending (strings/bytes), notification handling, and disconnection.
-- `example.py`: Demonstrates basic usage of `BluetoothController` for connecting, listing services, subscribing to notifications, sending test commands (`MOVE_FORWARD`, `STOP`), and disconnecting.
-- `input.py`: Provides an interactive command-line interface to manually send messages to the connected ESP32 car.
-- `connect.py`: Implements a TCP server (`127.0.0.1:8888`) that maintains a persistent BLE connection to the car. It receives commands via TCP and forwards them to the car via BLE, allowing control from other applications or networked devices.
-- `send.py`: A simple asynchronous TCP client to send commands to the `connect.py` server.
-
-#### `/Bluetooth/bluetooth_ino`
-Arduino code for the ESP32 microcontroller:
-- `bluetooth.ino`: Implements a BLE GATT server (`ESP_CAR`) using the Arduino BLE library. Defines the service (`000000ff-...`) and characteristic (`0000ff01-...`) UUIDs. Receives commands via BLE writes and controls the car's motors (connected to GPIOs 15, 2, 4, 16) and a reverse LED (GPIO 17). Includes functions for `Forward`, `Reverse`, `Left`, `Right`, `Stop`, `Reverse_LED_ON`, `Reverse_LED_OFF`. Performs a motor test sequence on setup.
-
-#### `/Bluetooth/gatt_server`
-ESP-IDF based GATT server implementation for the ESP32:
-- `main/gatts_demo.c`: A more detailed BLE GATT server implementation using the ESP-IDF framework. Defines services and characteristics (matching the Arduino version), handles BLE events (connection, disconnection, writes, reads, notifications), and integrates motor control functions (`Forward`, `Reverse`, `Left`, `Right`, `Stop`, `Reverse_LED_ON`, `Reverse_LED_OFF`) triggered by received BLE commands. Also performs a motor test sequence on startup.
-
-## Key Features
-- Real-time BLE communication between client and car
-- Motor control with commands: Forward, Reverse, Left, Right, Stop, Reverse LED On/Off
-- Robust BLE connection handling and command processing
-- Support for manual control via interactive command interface (`input.py`)
-- Persistent BLE connection management through TCP server (`connect.py`)
-- Device scanning and service discovery capabilities
-- Example script (`example.py`) for basic BLE interaction demonstration
-- TCP client (`send.py`) for sending commands to the persistent connection server
-
-## Technical Stack
-- ESP32 microcontroller for car control
-- Bluetooth Low Energy (BLE) for wireless communication
-- Python-based client implementation using `Bleak` library
-- ESP-IDF and Arduino Core for ESP32 for GATT server implementations
-- Motor driver (L298N assumed) for movement control
-- Asynchronous I/O (`asyncio`) for communication handling
-- TCP/IP for persistent connection option
+## Discoveries
+To keep this interface non-invasive, we relied on unconventional techniques to control the car, including focus detection and blinking to control movement. This is because without invasive technology, it is not possible to obtain accurate results for commands based on purely thoughts. This conclusion came directly from a study done with the Muse 2 Headset that achieved low accuracy with detected brain patterns matching specific thought patterns due to its non-invasive approach. As a result, we had to rely on aspects of brain activity or motor movement that were as close to the forehead as possible. This is also a factor in the device's inaccuracy at points, but is just a tradeoff to the approachable nature of it. 
