@@ -508,9 +508,14 @@ class EEGMonitorGUI(QWidget):
 
         # Focus plot with threshold controls
         focus_section_layout = QHBoxLayout()
+        focus_section_layout.setSpacing(0)  # Reduce spacing between elements
         
-        # Focus plot
-        self.focus_figure = Figure(figsize=(5, 4)) # side-by-side size
+        # Focus plot - wrap in a QWidget to better control sizing
+        focus_plot_widget = QWidget()
+        focus_plot_layout = QHBoxLayout(focus_plot_widget)
+        focus_plot_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.focus_figure = Figure(figsize=(5, 4))
         self.focus_canvas = FigureCanvas(self.focus_figure)
         self.focus_ax = self.focus_figure.add_subplot(111)
         self.focus_beta_line, = self.focus_ax.plot([], [], label="Beta Power")
@@ -521,40 +526,46 @@ class EEGMonitorGUI(QWidget):
         self.focus_ax.set_ylabel('Metric Value')
         self.focus_ax.legend(loc='lower left')
         self.focus_figure.tight_layout()
+        
+        # Set size policies for better expansion
         self.focus_canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        focus_section_layout.addWidget(self.focus_canvas)
+        focus_plot_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        focus_plot_layout.addWidget(self.focus_canvas)
         
-        # Add vertical threshold controls
-        threshold_controls = QVBoxLayout()
+        focus_section_layout.addWidget(focus_plot_widget, stretch=1)  # Add stretch factor
         
-        # Manual threshold checkbox at the top
+        # Threshold controls - make compact
+        threshold_controls = QWidget()
+        threshold_controls.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+        threshold_controls.setFixedWidth(80)  # Set fixed width for controls
+        threshold_layout = QVBoxLayout(threshold_controls)
+        threshold_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Manual threshold checkbox
         self.manual_threshold_checkbox = QCheckBox("Manual\nThreshold")
         self.manual_threshold_checkbox.setChecked(False)
         self.manual_threshold_checkbox.toggled.connect(self.toggle_manual_threshold)
-        threshold_controls.addWidget(self.manual_threshold_checkbox)
+        threshold_layout.addWidget(self.manual_threshold_checkbox)
         
-
-        
-        # Threshold slider 
+        # Threshold slider
         self.threshold_slider = QSlider(Qt.Orientation.Vertical)
         self.threshold_slider.setMinimum(-50)
         self.threshold_slider.setMaximum(100)
-        self.threshold_slider.setValue(int(self.manual_threshold_value*100)) 
+        self.threshold_slider.setValue(int(self.manual_threshold_value*100))
         self.threshold_slider.setTickPosition(QSlider.TickPosition.TicksRight)
         self.threshold_slider.setTickInterval(10)
         self.threshold_slider.valueChanged.connect(self.update_manual_threshold)
-        self.threshold_slider.setEnabled(False)  # Disabled until manual mode checked
-        self.threshold_slider.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        threshold_controls.addWidget(self.threshold_slider)
+        self.threshold_slider.setEnabled(False)
+        threshold_layout.addWidget(self.threshold_slider)
         
-        threshold_controls.addSpacing(50)
+        threshold_layout.addSpacing(50)
         
-        # Threshold value label at the bottom
+        # Threshold value label
         self.threshold_value_label = QLabel(f"{self.manual_threshold_value:.2f}")
         self.threshold_value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        threshold_controls.addWidget(self.threshold_value_label)
+        threshold_layout.addWidget(self.threshold_value_label)
         
-        focus_section_layout.addLayout(threshold_controls)
+        focus_section_layout.addWidget(threshold_controls)
         left_right_layout.addLayout(focus_section_layout)
 
         # Add the horizontal layout to the main layout
